@@ -25,7 +25,7 @@ interface ProviderSeed {
   latencySpread: number;
   baseTokenRate: number;
   tokenRateSpread: number;
-  qaCorrect: boolean;
+  qaCorrect: boolean | (() => boolean);
   historyLatency: number;
   historySpread: number;
 }
@@ -38,7 +38,7 @@ function makeProvider(seed: ProviderSeed): ProviderHealth {
     healthScore: jitter(seed.baseHealth, seed.healthSpread),
     latencyMs: jitter(seed.baseLatency, seed.latencySpread),
     tokenRate: jitter(seed.baseTokenRate, seed.tokenRateSpread),
-    qaCorrect: seed.qaCorrect,
+    qaCorrect: typeof seed.qaCorrect === "function" ? seed.qaCorrect() : seed.qaCorrect,
     latencyHistory: makeHistory(seed.historyLatency, seed.historySpread),
   };
 }
@@ -59,7 +59,7 @@ const PROVIDER_SEEDS: ProviderSeed[] = [
   {
     id: "gemini", name: "Gemini", status: "degraded",
     baseHealth: 61, healthSpread: 8, baseLatency: 2400, latencySpread: 500,
-    baseTokenRate: 31, tokenRateSpread: 10, qaCorrect: Math.random() > 0.4,
+    baseTokenRate: 31, tokenRateSpread: 10, qaCorrect: () => Math.random() > 0.4,
     historyLatency: 2200, historySpread: 900,
   },
 ];
