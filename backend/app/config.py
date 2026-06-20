@@ -26,10 +26,14 @@ HISTORY_LEN = int(os.getenv("HISTORY_LEN", "20"))
 # Per-request timeout for a single probe.
 PROBE_TIMEOUT = float(os.getenv("PROBE_TIMEOUT", "20"))
 
+# Disable OpenAPI/docs in production (set ENABLE_DOCS=1 for local dev).
+ENABLE_DOCS = os.getenv("ENABLE_DOCS", "").strip() in ("1", "true", "yes")
+
 QA_QUESTION = "What is 2+2? Answer with just the number."
 QA_EXPECTED = "4"
 
 CORS_ORIGINS = _origins()
+CORS_ALLOW_HEADERS = ["Content-Type", "Accept"]
 
 # API keys (None when unset -> provider marked `unknown`).
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")

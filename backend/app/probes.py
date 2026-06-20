@@ -337,7 +337,8 @@ async def _run_one(client: httpx.AsyncClient, target: dict) -> ProbeResult | Non
         )
     except Exception as exc:
         latency_ms = round((loop.time() - start) * 1000)
-        return ProbeResult(False, latency_ms, False, 0, None, f"{type(exc).__name__}: {exc}")
+        log.warning("probe %s failed: %s: %s", target["id"], type(exc).__name__, exc)
+        return ProbeResult(False, latency_ms, False, 0, None, "probe_error")
 
 
 # --- Scoring ---------------------------------------------------------------
