@@ -4,11 +4,14 @@ provider is reported as `unknown` rather than crashing the probe loop.
 Model names are discovered dynamically at startup (see probes.discover_models).
 The *_MODEL / *_MODEL_MID values here are only fallbacks used when discovery
 fails or no key is present."""
+import logging
 import os
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+log = logging.getLogger("watchtower.config")
 
 
 def _origins() -> list[str]:
@@ -19,12 +22,30 @@ def _origins() -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
+def _env_int(name: str, default: str) -> int:
+    raw = os.getenv(name, default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        log.warning("Invalid integer for %s=%r, falling back to %s", name, raw, default)
+        return int(default)
+
+
+def _env_float(name: str, default: str) -> float:
+    raw = os.getenv(name, default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        log.warning("Invalid float for %s=%r, falling back to %s", name, raw, default)
+        return float(default)
+
+
 # Probe cadence (seconds). Matches the frontend's 30s polling.
-PROBE_INTERVAL = int(os.getenv("PROBE_INTERVAL", "30"))
+PROBE_INTERVAL = _env_int("PROBE_INTERVAL", "30")
 # Points kept per probe target for the sparkline.
-HISTORY_LEN = int(os.getenv("HISTORY_LEN", "20"))
+HISTORY_LEN = _env_int("HISTORY_LEN", "20")
 # Per-request timeout for a single probe.
-PROBE_TIMEOUT = float(os.getenv("PROBE_TIMEOUT", "20"))
+PROBE_TIMEOUT = _env_float("PROBE_TIMEOUT", "20")
 
 QA_QUESTION = "What is 2+2? Answer with just the number."
 QA_EXPECTED = "4"

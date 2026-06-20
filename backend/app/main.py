@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
+from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
@@ -32,12 +33,19 @@ async def _probe_loop(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.client = httpx.AsyncClient(timeout=config.PROBE_TIMEOUT)
-    # Dynamic model discovery (flagship + mid per provider) at startup.
-    app.state.targets = await build_targets(app.state.client)
+    app.state.probe_state = None
+    try:
+        app.state.targets = await build_targets(app.state.client)
+    except Exception:
+        log.exception("failed to build probe targets at startup")
+        app.state.targets = []
     log.info("probe targets: %s", [(t["id"], t["model"]) for t in app.state.targets])
     app.state.probe_state = ProbeState(app.state.targets)
-    # One immediate probe so /health has real data fast, then loop in background.
-    await probe_all(app.state.client, app.state.probe_state, app.state.targets)
+    if app.state.targets:
+        try:
+            await probe_all(app.state.client, app.state.probe_state, app.state.targets)
+        except Exception:
+            log.exception("initial probe cycle failed")
     task = asyncio.create_task(_probe_loop(app))
     try:
         yield
@@ -60,6 +68,8 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthSnapshot)
 async def health() -> HealthSnapshot:
+    if app.state.probe_state is None:
+        raise HTTPException(status_code=503, detail="Probe engine not yet initialized")
     return HealthSnapshot(**app.state.probe_state.snapshot())
 
 

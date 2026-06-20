@@ -189,8 +189,13 @@ async def _probe_claude(client, model):
         },
     )
     if r.status_code != 200:
+        log.warning("claude probe HTTP %s for %s: %s", r.status_code, model, r.text[:200])
         return None, None, r.status_code
-    data = r.json()
+    try:
+        data = r.json()
+    except Exception:
+        log.warning("claude probe returned non-JSON for %s", model)
+        return None, None, r.status_code
     text = "".join(b.get("text", "") for b in data.get("content", []))
     return text, data.get("usage", {}).get("output_tokens"), r.status_code
 
@@ -212,9 +217,18 @@ async def _probe_gpt(client, model):
         },
     )
     if r.status_code != 200:
+        log.warning("gpt probe HTTP %s for %s: %s", r.status_code, model, r.text[:200])
         return None, None, r.status_code
-    data = r.json()
-    text = data["choices"][0]["message"]["content"]
+    try:
+        data = r.json()
+    except Exception:
+        log.warning("gpt probe returned non-JSON for %s", model)
+        return None, None, r.status_code
+    choices = data.get("choices") or []
+    if not choices:
+        log.warning("gpt probe returned empty choices for %s", model)
+        return None, None, r.status_code
+    text = choices[0].get("message", {}).get("content")
     return text, data.get("usage", {}).get("completion_tokens"), r.status_code
 
 
@@ -231,9 +245,17 @@ async def _probe_gemini(client, model):
         },
     )
     if r.status_code != 200:
+        log.warning("gemini probe HTTP %s for %s: %s", r.status_code, model, r.text[:200])
         return None, None, r.status_code
-    data = r.json()
-    candidates = data.get("candidates", [])
+    try:
+        data = r.json()
+    except Exception:
+        log.warning("gemini probe returned non-JSON for %s", model)
+        return None, None, r.status_code
+    candidates = data.get("candidates") or []
+    if not candidates:
+        log.warning("gemini probe returned empty candidates for %s", model)
+        return None, None, r.status_code
     parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
     text = "".join(p.get("text", "") for p in parts)
     return text, data.get("usageMetadata", {}).get("candidatesTokenCount"), r.status_code
@@ -335,8 +357,17 @@ async def _run_one(client: httpx.AsyncClient, target: dict) -> ProbeResult | Non
             token_rate=_token_rate(tokens, latency_ms) if ok else 0,
             http_status=status,
         )
+    except httpx.TimeoutException as exc:
+        latency_ms = round((loop.time() - start) * 1000)
+        log.warning("probe %s timed out after %dms", target["id"], latency_ms)
+        return ProbeResult(False, latency_ms, False, 0, None, f"TimeoutException: {exc}")
+    except httpx.ConnectError as exc:
+        latency_ms = round((loop.time() - start) * 1000)
+        log.warning("probe %s connection failed: %s", target["id"], exc)
+        return ProbeResult(False, latency_ms, False, 0, None, f"ConnectError: {exc}")
     except Exception as exc:
         latency_ms = round((loop.time() - start) * 1000)
+        log.error("probe %s unexpected error: %s: %s", target["id"], type(exc).__name__, exc)
         return ProbeResult(False, latency_ms, False, 0, None, f"{type(exc).__name__}: {exc}")
 
 
@@ -457,6 +488,10 @@ def _build_alerts(providers: list[dict]) -> list[dict]:
 
 
 async def probe_all(client: httpx.AsyncClient, state: ProbeState, targets: list[dict]) -> None:
-    results = await asyncio.gather(*(_run_one(client, t) for t in targets))
+    results = await asyncio.gather(*(_run_one(client, t) for t in targets), return_exceptions=True)
     for target, result in zip(targets, results):
-        state.apply(target, result)
+        if isinstance(result, BaseException):
+            log.error("probe %s raised unexpectedly: %s", target["id"], result)
+            state.apply(target, ProbeResult(False, 0, False, 0, None, str(result)))
+        else:
+            state.apply(target, result)
