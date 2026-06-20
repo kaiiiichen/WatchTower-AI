@@ -23,6 +23,7 @@ export default function Dashboard() {
           setError(null);
         }
       } catch (e) {
+        // Keep stale data visible while showing the error.
         if (active) setError(e instanceof Error ? e.message : "fetch failed");
       }
     }
@@ -46,18 +47,19 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="text-right text-xs text-white/40">
-            {error ? (
-              <span className="text-rose-400">⚠ {error}</span>
-            ) : snap ? (
+            {error && (
+              <div className="text-rose-400">⚠ {error}</div>
+            )}
+            {snap ? (
               <>
                 <div>Last updated</div>
                 <div className="tabular-nums">
                   {new Date(snap.updatedAt).toLocaleTimeString()}
                 </div>
               </>
-            ) : (
+            ) : !error ? (
               <span>Connecting…</span>
-            )}
+            ) : null}
           </div>
         </header>
 
@@ -72,7 +74,7 @@ export default function Dashboard() {
         <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {snap
             ? snap.providers.map((p) => <ProviderCard key={p.id} p={p} />)
-            : [0, 1, 2].map((i) => (
+            : [0, 1, 2, 3, 4, 5].map((i) => (
                 <div
                   key={i}
                   className="h-56 animate-pulse rounded-2xl border border-white/10 bg-white/[0.03]"

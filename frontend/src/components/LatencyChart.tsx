@@ -12,7 +12,7 @@ export default function LatencyChart({
   color = "#34d399",
   height = 56,
 }: Props) {
-  if (data.length === 0) return null;
+  if (data.length < 2) return null;
 
   const width = 240;
   const pad = 4;

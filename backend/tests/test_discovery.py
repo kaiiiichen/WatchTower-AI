@@ -4,6 +4,7 @@ No network: pure selection rules plus httpx.MockTransport for the list/probe
 HTTP paths. Run with `PYTHONPATH=. .venv/bin/python tests/test_discovery.py`
 (or pytest)."""
 import asyncio
+from unittest.mock import patch
 
 import httpx
 
@@ -73,49 +74,49 @@ def test_gemini_lite_excluded():
 
 
 def _run_async(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_discover_live_then_fallback():
     async def main():
-        config.ANTHROPIC_API_KEY = "test-key"
-        claude = next(p for p in probes.PROVIDERS if p["id"] == "claude")
+        with patch.object(config, "ANTHROPIC_API_KEY", "test-key"):
+            claude = next(p for p in probes.PROVIDERS if p["id"] == "claude")
 
-        ok = httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(200, json={"data": [{"id": i} for i in ANTHROPIC_IDS]})
+            ok = httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda r: httpx.Response(200, json={"data": [{"id": i} for i in ANTHROPIC_IDS]})
+                )
             )
-        )
-        assert await probes.discover_models(ok, claude) == {
-            "flagship": "claude-opus-4-1-20250805",
-            "mid": "claude-sonnet-4-5-20250929",
-        }
-        await ok.aclose()
+            assert await probes.discover_models(ok, claude) == {
+                "flagship": "claude-opus-4-1-20250805",
+                "mid": "claude-sonnet-4-5-20250929",
+            }
+            await ok.aclose()
 
-        bad = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(401, json={})))
-        assert await probes.discover_models(bad, claude) == {
-            "flagship": config.ANTHROPIC_MODEL,
-            "mid": config.ANTHROPIC_MODEL_MID,
-        }
-        await bad.aclose()
+            bad = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(401, json={})))
+            assert await probes.discover_models(bad, claude) == {
+                "flagship": config.ANTHROPIC_MODEL,
+                "mid": config.ANTHROPIC_MODEL_MID,
+            }
+            await bad.aclose()
 
     _run_async(main())
 
 
 def test_list_gemini_strips_prefix_and_filters():
     async def main():
-        config.GEMINI_API_KEY = "k"
-        c = httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(200, json={"models": [
-                    {"name": "models/gemini-2.5-pro", "supportedGenerationMethods": ["generateContent"]},
-                    {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
-                    {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]},
-                ]})
+        with patch.object(config, "GEMINI_API_KEY", "k"):
+            c = httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda r: httpx.Response(200, json={"models": [
+                        {"name": "models/gemini-2.5-pro", "supportedGenerationMethods": ["generateContent"]},
+                        {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                        {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]},
+                    ]})
+                )
             )
-        )
-        assert await probes._list_gemini(c) == ["gemini-2.5-pro", "gemini-2.5-flash"]
-        await c.aclose()
+            assert await probes._list_gemini(c) == ["gemini-2.5-pro", "gemini-2.5-flash"]
+            await c.aclose()
 
     _run_async(main())
 
