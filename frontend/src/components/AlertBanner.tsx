@@ -1,15 +1,10 @@
 import type { Alert } from "@/lib/types";
-
-const SEVERITY = {
-  info: "border-sky-500/40 bg-sky-500/10",
-  warning: "border-amber-500/40 bg-amber-500/10",
-  critical: "border-rose-500/40 bg-rose-500/10",
-} as const;
+import { SEVERITY_STYLES } from "@/lib/style-maps";
 
 // Renders the "Agent" action chain as a narrative card.
 export default function AlertBanner({ alert }: { alert: Alert }) {
   return (
-    <div className={`rounded-2xl border p-5 ${SEVERITY[alert.severity]}`}>
+    <div className={`rounded-2xl border p-5 ${SEVERITY_STYLES[alert.severity]}`}>
       <div className="flex items-center gap-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-white/60">
           {alert.severity}
