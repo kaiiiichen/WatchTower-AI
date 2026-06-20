@@ -40,7 +40,7 @@ def _now_iso() -> str:
 
 
 def _qa_ok(text: str | None) -> bool:
-    return bool(text) and bool(re.search(r'\b' + re.escape(config.QA_EXPECTED) + r'\b', text))
+    return bool(text) and config.QA_EXPECTED in text
 
 
 def _token_rate(output_tokens: int | None, latency_ms: int) -> int:
@@ -184,8 +184,14 @@ async def _do_probe(
     """Shared probe skeleton: POST, check status, delegate parsing."""
     r = await client.post(**request_kwargs)
     if r.status_code != 200:
+        log.warning("probe HTTP %s: %s", r.status_code, r.text[:200])
         return None, None, r.status_code
-    text, tokens = parse_fn(r.json())
+    try:
+        data = r.json()
+    except Exception:
+        log.warning("probe returned non-JSON response")
+        return None, None, r.status_code
+    text, tokens = parse_fn(data)
     return text, tokens, r.status_code
 
 
@@ -196,7 +202,10 @@ def _parse_claude(data: dict) -> tuple[str, int | None]:
 
 def _parse_gpt(data: dict) -> tuple[str | None, int | None]:
     choices = data.get("choices") or []
-    text = choices[0]["message"].get("content") if choices else None
+    if not choices:
+        log.warning("gpt probe returned empty choices")
+        return None, None
+    text = choices[0].get("message", {}).get("content")
     return text, data.get("usage", {}).get("completion_tokens")
 
 
@@ -225,6 +234,7 @@ async def _probe_claude(client, model):
     )
 
 
+
 async def _probe_gpt(client, model):
     return await _do_probe(
         client,
@@ -245,6 +255,7 @@ async def _probe_gpt(client, model):
     )
 
 
+
 async def _probe_gemini(client, model):
     return await _do_probe(
         client,
@@ -259,6 +270,7 @@ async def _probe_gemini(client, model):
             "generationConfig": {"maxOutputTokens": 512},
         },
     )
+
 
 
 # --- Provider registry -----------------------------------------------------
@@ -349,7 +361,7 @@ async def _run_one(client: httpx.AsyncClient, target: dict) -> ProbeResult | Non
     """None when the API key is missing (-> `unknown`)."""
     if not target["has_key"]:
         return None
-    loop = asyncio.get_running_loop()
+    loop = asyncio.get_event_loop()
     start = loop.time()
     try:
         text, tokens, status = await target["probe"](client, target["model"])
@@ -362,9 +374,17 @@ async def _run_one(client: httpx.AsyncClient, target: dict) -> ProbeResult | Non
             token_rate=_token_rate(tokens, latency_ms) if ok else 0,
             http_status=status,
         )
+    except httpx.TimeoutException as exc:
+        latency_ms = round((loop.time() - start) * 1000)
+        log.warning("probe %s timed out after %dms", target["id"], latency_ms)
+        return ProbeResult(False, latency_ms, False, 0, None, f"TimeoutException: {exc}")
+    except httpx.ConnectError as exc:
+        latency_ms = round((loop.time() - start) * 1000)
+        log.warning("probe %s connection failed: %s", target["id"], exc)
+        return ProbeResult(False, latency_ms, False, 0, None, f"ConnectError: {exc}")
     except Exception as exc:
         latency_ms = round((loop.time() - start) * 1000)
-        log.warning("probe %s failed: %s: %s", target["id"], type(exc).__name__, exc)
+        log.error("probe %s unexpected error: %s: %s", target["id"], type(exc).__name__, exc)
         return ProbeResult(False, latency_ms, False, 0, None, "probe_error")
 
 
@@ -454,15 +474,11 @@ class ProbeState:
 def _build_alerts(providers: list[dict]) -> list[dict]:
     """Minimal rule-based alerts; full 'Agent' chain is a later module."""
     healthy = [p for p in providers if p["status"] == "operational"]
+    best = max(healthy, key=lambda p: p["healthScore"], default=None)
     alerts: list[dict] = []
     for p in providers:
         if p["status"] in ("degraded", "down"):
             label = f"{p['name']} {p.get('tier', '')}".strip()
-            # Prefer a healthy alternative from a *different* provider.
-            candidates = [
-                h for h in healthy if h.get("provider_id", h["id"]) != p.get("provider_id", p["id"])
-            ] or healthy
-            best = max(candidates, key=lambda h: h["healthScore"], default=None)
             alt = (
                 f"Route to {best['name']} {best.get('tier', '')} "
                 f"(health {best['healthScore']}, ~{best['latencyMs']}ms)."
@@ -493,6 +509,10 @@ def _build_alerts(providers: list[dict]) -> list[dict]:
 
 
 async def probe_all(client: httpx.AsyncClient, state: ProbeState, targets: list[dict]) -> None:
-    results = await asyncio.gather(*(_run_one(client, t) for t in targets))
+    results = await asyncio.gather(*(_run_one(client, t) for t in targets), return_exceptions=True)
     for target, result in zip(targets, results):
-        state.apply(target, result)
+        if isinstance(result, BaseException):
+            log.error("probe %s raised unexpectedly: %s", target["id"], result)
+            state.apply(target, ProbeResult(False, 0, False, 0, None, str(result)))
+        else:
+            state.apply(target, result)

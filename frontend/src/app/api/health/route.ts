@@ -25,14 +25,31 @@ export async function GET() {
     }
     try {
       const res = await fetch(`${backend}/health`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`backend HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error(`backend returned HTTP ${res.status}: ${body.slice(0, 500)}`);
+        throw new Error(`backend HTTP ${res.status}`);
+      }
       const data = await res.json();
       return NextResponse.json({ ...data, source: "live" as const });
-    } catch {
-      // Surface the failure but keep the dashboard alive on mock data.
-      return NextResponse.json({ ...buildMockSnapshot(), source: "mock" as const }, {
-        headers: { "x-watchtower-fallback": "mock" },
-      });
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "unknown backend error";
+      console.error("backend health fetch failed:", message);
+      return NextResponse.json(
+        {
+          ...buildMockSnapshot(),
+          source: "mock" as const,
+          backendError: message,
+        },
+        {
+          status: 200,
+          headers: {
+            "x-watchtower-fallback": "mock",
+            "x-watchtower-error": message.slice(0, 200),
+          },
+        },
+      );
     }
   }
   return NextResponse.json({ ...buildMockSnapshot(), source: "mock" as const });
