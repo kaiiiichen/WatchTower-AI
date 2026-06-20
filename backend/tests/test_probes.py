@@ -3,7 +3,6 @@ probe adapters, and probe_all orchestration.
 
 All network calls are mocked via httpx.MockTransport."""
 import asyncio
-from unittest.mock import patch
 
 import httpx
 import pytest
@@ -28,13 +27,14 @@ from app.probes import (
 
 class TestQaOk:
     def test_contains_expected(self):
-        assert _qa_ok("The answer is 4.") is True
+        assert _qa_ok(f"The answer is {config.QA_EXPECTED}.") is True
 
     def test_exact_match(self):
-        assert _qa_ok("4") is True
+        assert _qa_ok(config.QA_EXPECTED) is True
 
     def test_wrong_answer(self):
-        assert _qa_ok("5") is False
+        wrong = "999" if config.QA_EXPECTED != "999" else "000"
+        assert _qa_ok(wrong) is False
 
     def test_empty_string(self):
         assert _qa_ok("") is False
@@ -43,7 +43,7 @@ class TestQaOk:
         assert _qa_ok(None) is False
 
     def test_whitespace_around(self):
-        assert _qa_ok("  4  ") is True
+        assert _qa_ok(f"  {config.QA_EXPECTED}  ") is True
 
 
 # ---------------------------------------------------------------------------
@@ -327,14 +327,17 @@ class TestBuildAlerts:
 class TestRunOne:
     def test_missing_key_returns_none(self):
         target = {"id": "claude-flagship", "has_key": False, "probe": None, "model": "m"}
-        result = asyncio.get_event_loop().run_until_complete(
-            _run_one(httpx.AsyncClient(), target)
-        )
+
+        async def run():
+            async with httpx.AsyncClient() as client:
+                return await _run_one(client, target)
+
+        result = asyncio.get_event_loop().run_until_complete(run())
         assert result is None
 
     def test_successful_probe(self):
         async def fake_probe(client, model):
-            return "4", 10, 200
+            return config.QA_EXPECTED, 10, 200
 
         target = {"id": "test", "has_key": True, "probe": fake_probe, "model": "m"}
 
@@ -478,7 +481,7 @@ class TestProbeAdapters:
 class TestProbeAll:
     def test_probe_all_applies_results(self):
         async def ok_probe(client, model):
-            return "4", 10, 200
+            return config.QA_EXPECTED, 10, 200
 
         targets = [
             {"id": "a-flagship", "name": "A", "tier": "flagship",
