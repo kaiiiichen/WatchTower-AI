@@ -39,7 +39,11 @@ class Alert(BaseModel):
     createdAt: str
 
 
+DataSource = Literal["live", "mock"]
+
+
 class HealthSnapshot(BaseModel):
     providers: list[ProviderHealth]
     alerts: list[Alert]
     updatedAt: str
+    source: DataSource | None = None

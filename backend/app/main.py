@@ -20,13 +20,16 @@ log = logging.getLogger("watchtower")
 async def _probe_loop(app: FastAPI) -> None:
     client: httpx.AsyncClient = app.state.client
     state: ProbeState = app.state.probe_state
+    loop = asyncio.get_running_loop()
     while True:
+        cycle_start = loop.time()
         try:
             await probe_all(client, state, app.state.targets)
             log.info("probe cycle complete: %s", state.updated_at)
         except Exception:  # never let the loop die
             log.exception("probe cycle failed")
-        await asyncio.sleep(config.PROBE_INTERVAL)
+        elapsed = loop.time() - cycle_start
+        await asyncio.sleep(max(0, config.PROBE_INTERVAL - elapsed))
 
 
 @asynccontextmanager

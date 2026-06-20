@@ -40,7 +40,7 @@ def _now_iso() -> str:
 
 
 def _qa_ok(text: str | None) -> bool:
-    return bool(text) and config.QA_EXPECTED in text
+    return bool(text) and bool(re.search(r'\b' + re.escape(config.QA_EXPECTED) + r'\b', text))
 
 
 def _token_rate(output_tokens: int | None, latency_ms: int) -> int:
@@ -194,8 +194,9 @@ def _parse_claude(data: dict) -> tuple[str, int | None]:
     return text, data.get("usage", {}).get("output_tokens")
 
 
-def _parse_gpt(data: dict) -> tuple[str, int | None]:
-    text = data["choices"][0]["message"]["content"]
+def _parse_gpt(data: dict) -> tuple[str | None, int | None]:
+    choices = data.get("choices") or []
+    text = choices[0]["message"].get("content") if choices else None
     return text, data.get("usage", {}).get("completion_tokens")
 
 
@@ -348,7 +349,7 @@ async def _run_one(client: httpx.AsyncClient, target: dict) -> ProbeResult | Non
     """None when the API key is missing (-> `unknown`)."""
     if not target["has_key"]:
         return None
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     start = loop.time()
     try:
         text, tokens, status = await target["probe"](client, target["model"])
@@ -453,11 +454,15 @@ class ProbeState:
 def _build_alerts(providers: list[dict]) -> list[dict]:
     """Minimal rule-based alerts; full 'Agent' chain is a later module."""
     healthy = [p for p in providers if p["status"] == "operational"]
-    best = max(healthy, key=lambda p: p["healthScore"], default=None)
     alerts: list[dict] = []
     for p in providers:
         if p["status"] in ("degraded", "down"):
             label = f"{p['name']} {p.get('tier', '')}".strip()
+            # Prefer a healthy alternative from a *different* provider.
+            candidates = [
+                h for h in healthy if h.get("provider_id", h["id"]) != p.get("provider_id", p["id"])
+            ] or healthy
+            best = max(candidates, key=lambda h: h["healthScore"], default=None)
             alt = (
                 f"Route to {best['name']} {best.get('tier', '')} "
                 f"(health {best['healthScore']}, ~{best['latencyMs']}ms)."
