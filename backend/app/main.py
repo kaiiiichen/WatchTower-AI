@@ -56,13 +56,19 @@ async def lifespan(app: FastAPI):
         await app.state.client.aclose()
 
 
-app = FastAPI(title="Watchtower AI — Probe Engine", lifespan=lifespan)
+app = FastAPI(
+    title="Watchtower AI — Probe Engine",
+    lifespan=lifespan,
+    docs_url="/docs" if config.ENABLE_DOCS else None,
+    redoc_url="/redoc" if config.ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if config.ENABLE_DOCS else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
     allow_methods=["GET"],
-    allow_headers=["*"],
+    allow_headers=config.CORS_ALLOW_HEADERS,
 )
 
 

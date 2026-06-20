@@ -5,9 +5,24 @@ import { buildMockSnapshot } from "@/lib/mock-data";
 // otherwise serve mock data so the dashboard works standalone.
 export const dynamic = "force-dynamic";
 
+function isAllowedBackendUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export async function GET() {
   const backend = process.env.BACKEND_URL;
   if (backend) {
+    if (!isAllowedBackendUrl(backend)) {
+      return NextResponse.json({ ...buildMockSnapshot(), source: "mock" as const }, {
+        status: 502,
+        headers: { "x-watchtower-fallback": "invalid-backend-url" },
+      });
+    }
     try {
       const res = await fetch(`${backend}/health`, { cache: "no-store" });
       if (!res.ok) {
