@@ -173,10 +173,54 @@ def _select_gemini(models: list[str]) -> dict[str, str | None]:
 
 # --- Probe adapters (now take a model id) ----------------------------------
 
+ProbeResponse = tuple[str | None, int | None, int]
+
+
+async def _do_probe(
+    client: httpx.AsyncClient,
+    parse_fn,
+    **request_kwargs,
+) -> ProbeResponse:
+    """Shared probe skeleton: POST, check status, delegate parsing."""
+    r = await client.post(**request_kwargs)
+    if r.status_code != 200:
+        log.warning("probe HTTP %s: %s", r.status_code, r.text[:200])
+        return None, None, r.status_code
+    try:
+        data = r.json()
+    except Exception:
+        log.warning("probe returned non-JSON response")
+        return None, None, r.status_code
+    text, tokens = parse_fn(data)
+    return text, tokens, r.status_code
+
+
+def _parse_claude(data: dict) -> tuple[str, int | None]:
+    text = "".join(b.get("text", "") for b in data.get("content", []))
+    return text, data.get("usage", {}).get("output_tokens")
+
+
+def _parse_gpt(data: dict) -> tuple[str | None, int | None]:
+    choices = data.get("choices") or []
+    if not choices:
+        log.warning("gpt probe returned empty choices")
+        return None, None
+    text = choices[0].get("message", {}).get("content")
+    return text, data.get("usage", {}).get("completion_tokens")
+
+
+def _parse_gemini(data: dict) -> tuple[str, int | None]:
+    candidates = data.get("candidates", [])
+    parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+    text = "".join(p.get("text", "") for p in parts)
+    return text, data.get("usageMetadata", {}).get("candidatesTokenCount")
+
 
 async def _probe_claude(client, model):
-    r = await client.post(
-        "https://api.anthropic.com/v1/messages",
+    return await _do_probe(
+        client,
+        _parse_claude,
+        url="https://api.anthropic.com/v1/messages",
         headers={
             "x-api-key": config.ANTHROPIC_API_KEY or "",
             "anthropic-version": "2023-06-01",
@@ -188,21 +232,14 @@ async def _probe_claude(client, model):
             "messages": [{"role": "user", "content": config.QA_QUESTION}],
         },
     )
-    if r.status_code != 200:
-        log.warning("claude probe HTTP %s for %s: %s", r.status_code, model, r.text[:200])
-        return None, None, r.status_code
-    try:
-        data = r.json()
-    except Exception:
-        log.warning("claude probe returned non-JSON for %s", model)
-        return None, None, r.status_code
-    text = "".join(b.get("text", "") for b in data.get("content", []))
-    return text, data.get("usage", {}).get("output_tokens"), r.status_code
+
 
 
 async def _probe_gpt(client, model):
-    r = await client.post(
-        "https://api.openai.com/v1/chat/completions",
+    return await _do_probe(
+        client,
+        _parse_gpt,
+        url="https://api.openai.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {config.OPENAI_API_KEY or ''}",
             "content-type": "application/json",
@@ -216,25 +253,14 @@ async def _probe_gpt(client, model):
             "messages": [{"role": "user", "content": config.QA_QUESTION}],
         },
     )
-    if r.status_code != 200:
-        log.warning("gpt probe HTTP %s for %s: %s", r.status_code, model, r.text[:200])
-        return None, None, r.status_code
-    try:
-        data = r.json()
-    except Exception:
-        log.warning("gpt probe returned non-JSON for %s", model)
-        return None, None, r.status_code
-    choices = data.get("choices") or []
-    if not choices:
-        log.warning("gpt probe returned empty choices for %s", model)
-        return None, None, r.status_code
-    text = choices[0].get("message", {}).get("content")
-    return text, data.get("usage", {}).get("completion_tokens"), r.status_code
+
 
 
 async def _probe_gemini(client, model):
-    r = await client.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    return await _do_probe(
+        client,
+        _parse_gemini,
+        url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         headers={"content-type": "application/json"},
         params={"key": config.GEMINI_API_KEY or ""},
         json={
@@ -244,21 +270,7 @@ async def _probe_gemini(client, model):
             "generationConfig": {"maxOutputTokens": 512},
         },
     )
-    if r.status_code != 200:
-        log.warning("gemini probe HTTP %s for %s: %s", r.status_code, model, r.text[:200])
-        return None, None, r.status_code
-    try:
-        data = r.json()
-    except Exception:
-        log.warning("gemini probe returned non-JSON for %s", model)
-        return None, None, r.status_code
-    candidates = data.get("candidates") or []
-    if not candidates:
-        log.warning("gemini probe returned empty candidates for %s", model)
-        return None, None, r.status_code
-    parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
-    text = "".join(p.get("text", "") for p in parts)
-    return text, data.get("usageMetadata", {}).get("candidatesTokenCount"), r.status_code
+
 
 
 # --- Provider registry -----------------------------------------------------
@@ -296,25 +308,30 @@ PROVIDERS = [
 ]
 
 
+def _tier_dict(src: dict, fallback: dict | None = None) -> dict[str, str | None]:
+    """Build a {flagship, mid} dict, optionally filling gaps from fallback."""
+    return {
+        tier: src.get(tier) or (fallback.get(tier) if fallback else None)
+        for tier in TIERS
+    }
+
+
 async def discover_models(client: httpx.AsyncClient, provider: dict) -> dict[str, str | None]:
     """Return {flagship, mid} model ids. Tries the provider's list-models
     endpoint; on any failure (or missing key / unimplemented), falls back to the
     env-configured names, per tier."""
     fb = provider["fallback"]()
     if not provider["list_fn"] or not provider["key"]():
-        return {"flagship": fb.get("flagship"), "mid": fb.get("mid")}
+        return _tier_dict(fb)
     try:
         models = await provider["list_fn"](client)
         sel = provider["select"](models)
-        chosen = {
-            "flagship": sel.get("flagship") or fb.get("flagship"),
-            "mid": sel.get("mid") or fb.get("mid"),
-        }
+        chosen = _tier_dict(sel, fb)
         log.info("discovered %s models: %s", provider["id"], chosen)
         return chosen
     except Exception as exc:
         log.warning("discovery failed for %s (%s); using env fallback", provider["id"], exc)
-        return {"flagship": fb.get("flagship"), "mid": fb.get("mid")}
+        return _tier_dict(fb)
 
 
 async def build_targets(client: httpx.AsyncClient) -> list[dict]:
@@ -392,6 +409,28 @@ def _score_and_status(r: ProbeResult | None) -> tuple[int, str]:
     return score, "down"
 
 
+# --- Shared dict builder ---------------------------------------------------
+
+
+def _build_provider_health(
+    *, target: dict, status: str, score: int, latency: int,
+    token_rate: int, qa_correct: bool, history: list,
+) -> dict:
+    """Single source of truth for the provider-health dict shape."""
+    return {
+        "id": target["id"],
+        "name": target["name"],
+        "status": status,
+        "healthScore": score,
+        "latencyMs": latency,
+        "tokenRate": token_rate,
+        "qaCorrect": qa_correct,
+        "latencyHistory": history,
+        "tier": target["tier"],
+        "model": target["model"],
+    }
+
+
 # --- In-memory state -------------------------------------------------------
 
 
@@ -403,23 +442,11 @@ class ProbeState:
         self._history: dict[str, deque] = {t["id"]: deque(maxlen=config.HISTORY_LEN) for t in targets}
         self._latest: dict[str, dict] = {}
         for t in targets:
-            self._latest[t["id"]] = self._seed(t)
+            self._latest[t["id"]] = _build_provider_health(
+                target=t, status="unknown", score=0, latency=0,
+                token_rate=0, qa_correct=False, history=[],
+            )
         self.updated_at = _now_iso()
-
-    @staticmethod
-    def _seed(t: dict) -> dict:
-        return {
-            "id": t["id"],
-            "name": t["name"],
-            "status": "unknown",
-            "healthScore": 0,
-            "latencyMs": 0,
-            "tokenRate": 0,
-            "qaCorrect": False,
-            "latencyHistory": [],
-            "tier": t["tier"],
-            "model": t["model"],
-        }
 
     def apply(self, target: dict, result: ProbeResult | None) -> None:
         tid = target["id"]
@@ -427,18 +454,12 @@ class ProbeState:
         latency = result.latency_ms if result else 0
         if result is not None:
             self._history[tid].append({"t": _now_iso(), "ms": latency})
-        self._latest[tid] = {
-            "id": tid,
-            "name": target["name"],
-            "status": status,
-            "healthScore": score,
-            "latencyMs": latency,
-            "tokenRate": result.token_rate if result else 0,
-            "qaCorrect": result.qa_correct if result else False,
-            "latencyHistory": list(self._history[tid]),
-            "tier": target["tier"],
-            "model": target["model"],
-        }
+        self._latest[tid] = _build_provider_health(
+            target=target, status=status, score=score, latency=latency,
+            token_rate=result.token_rate if result else 0,
+            qa_correct=result.qa_correct if result else False,
+            history=list(self._history[tid]),
+        )
         self.updated_at = _now_iso()
 
     def snapshot(self) -> dict:
