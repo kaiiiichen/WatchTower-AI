@@ -15,43 +15,58 @@ function makeHistory(base: number, spread: number, n = 20) {
   }));
 }
 
-export function buildMockSnapshot(): Omit<HealthSnapshot, "source"> {
-  // Gemini is intentionally "degraded" to exercise the alert/agent UI.
-  const claude: ProviderHealth = {
-    id: "claude",
-    name: "Claude",
-    status: "operational",
-    healthScore: jitter(98, 4),
-    latencyMs: jitter(820, 120),
-    tokenRate: jitter(74, 8),
-    qaCorrect: true,
-    latencyHistory: makeHistory(820, 180),
-  };
+interface ProviderSeed {
+  id: string;
+  name: string;
+  status: ProviderHealth["status"];
+  baseHealth: number;
+  healthSpread: number;
+  baseLatency: number;
+  latencySpread: number;
+  baseTokenRate: number;
+  tokenRateSpread: number;
+  qaCorrect: boolean;
+  historyLatency: number;
+  historySpread: number;
+}
 
-  const gpt: ProviderHealth = {
-    id: "gpt",
-    name: "GPT",
-    status: "operational",
-    healthScore: jitter(96, 5),
-    latencyMs: jitter(910, 140),
-    tokenRate: jitter(68, 8),
-    qaCorrect: true,
-    latencyHistory: makeHistory(910, 200),
-  };
-
-  const gemini: ProviderHealth = {
-    id: "gemini",
-    name: "Gemini",
-    status: "degraded",
-    healthScore: jitter(61, 8),
-    latencyMs: jitter(2400, 500),
-    tokenRate: jitter(31, 10),
-    qaCorrect: Math.random() > 0.4,
-    latencyHistory: makeHistory(2200, 900),
-  };
-
+function makeProvider(seed: ProviderSeed): ProviderHealth {
   return {
-    providers: [claude, gpt, gemini],
+    id: seed.id,
+    name: seed.name,
+    status: seed.status,
+    healthScore: jitter(seed.baseHealth, seed.healthSpread),
+    latencyMs: jitter(seed.baseLatency, seed.latencySpread),
+    tokenRate: jitter(seed.baseTokenRate, seed.tokenRateSpread),
+    qaCorrect: seed.qaCorrect,
+    latencyHistory: makeHistory(seed.historyLatency, seed.historySpread),
+  };
+}
+
+const PROVIDER_SEEDS: ProviderSeed[] = [
+  {
+    id: "claude", name: "Claude", status: "operational",
+    baseHealth: 98, healthSpread: 4, baseLatency: 820, latencySpread: 120,
+    baseTokenRate: 74, tokenRateSpread: 8, qaCorrect: true,
+    historyLatency: 820, historySpread: 180,
+  },
+  {
+    id: "gpt", name: "GPT", status: "operational",
+    baseHealth: 96, healthSpread: 5, baseLatency: 910, latencySpread: 140,
+    baseTokenRate: 68, tokenRateSpread: 8, qaCorrect: true,
+    historyLatency: 910, historySpread: 200,
+  },
+  {
+    id: "gemini", name: "Gemini", status: "degraded",
+    baseHealth: 61, healthSpread: 8, baseLatency: 2400, latencySpread: 500,
+    baseTokenRate: 31, tokenRateSpread: 10, qaCorrect: Math.random() > 0.4,
+    historyLatency: 2200, historySpread: 900,
+  },
+];
+
+export function buildMockSnapshot(): Omit<HealthSnapshot, "source"> {
+  return {
+    providers: PROVIDER_SEEDS.map(makeProvider),
     alerts: [
       {
         id: "alert-gemini-latency",

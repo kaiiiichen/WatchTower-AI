@@ -1,15 +1,9 @@
 import type { ProviderHealth } from "@/lib/types";
+import { STATUS_STYLES } from "@/lib/style-maps";
 import LatencyChart from "./LatencyChart";
 
-const STATUS = {
-  operational: { label: "Operational", dot: "bg-emerald-400", text: "text-emerald-400", line: "#34d399" },
-  degraded: { label: "Degraded", dot: "bg-amber-400", text: "text-amber-400", line: "#fbbf24" },
-  down: { label: "Down", dot: "bg-rose-500", text: "text-rose-500", line: "#fb7185" },
-  unknown: { label: "Unknown", dot: "bg-white/30", text: "text-white/40", line: "#9ca3af" },
-} as const;
-
 export default function ProviderCard({ p }: { p: ProviderHealth }) {
-  const s = STATUS[p.status];
+  const s = STATUS_STYLES[p.status];
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur">
       <div className="flex items-center justify-between">
