@@ -125,7 +125,7 @@ function Header() {
 function CaseTimelineChart({ c, secondary }: { c: CaseTimeline; secondary?: CaseTimeline }) {
   const t0 = ms(c.impactStart);
   const tInv = ms(c.investigating);
-  const tEnd = ms(c.resolved) ?? tInv;
+  const tEnd = ms(c.resolved) || tInv;
   const span = Math.max(1, tEnd - t0);
   const pos = (t: number) => `${((t - t0) / span) * 100}%`;
 
