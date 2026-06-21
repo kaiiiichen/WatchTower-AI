@@ -4,7 +4,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](frontend/package.json)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688)](backend/requirements.txt)
 
-Next.js · React · TypeScript · Tailwind · FastAPI · Python · SQLite · Sentry
+Next.js · React · TypeScript · Tailwind · FastAPI · Python · SQLite · Docker · Sentry
 
 **English** · **中文**
 
@@ -13,6 +13,7 @@ Next.js · React · TypeScript · Tailwind · FastAPI · Python · SQLite · Sen
 | **Source** | https://github.com/kaiiiichen/WatchTower-AI |
 | **Hackathon** | [UC Berkeley AI Hackathon 2026](https://ai-hackathon-2026.devpost.com/) |
 | **Local demo** | Frontend `http://localhost:3000` · Backend `http://localhost:8000` |
+| **Docker demo** | `docker compose up --build` → [http://localhost:3000](http://localhost:3000) |
 
 ---
 
@@ -27,7 +28,8 @@ Next.js · React · TypeScript · Tailwind · FastAPI · Python · SQLite · Sen
 3. [What WatchTower AI does](#what-watchtower-ai-does)
 4. [Technical reference](#technical-reference)
    - [Requirements](#requirements)
-   - [Quick start](#quick-start)
+   - [Quick start (Docker)](#quick-start-docker)
+   - [Quick start (local dev)](#quick-start-local-dev)
    - [Configuration](#configuration)
    - [API reference](#api-reference)
    - [Architecture](#architecture)
@@ -69,9 +71,9 @@ Built at **[UC Berkeley AI Hackathon 2026](https://ai-hackathon-2026.devpost.com
 **Judging alignment** (Application · Functionality · Creativity · Technical complexity):
 
 - **Application** — Every LLM developer hits midnight outages; independent probing + local diagnostics is immediately usable.
-- **Functionality** — Full probe loop, four-way verdict, alerts, community corroboration, VU dataset backtest, optional Sentry — all implemented, not mocked.
-- **Creativity** — QA probe ("2+2=4"), precursor `degrading` trend, HN corroboration as additive signal, honest boundaries on what we can claim.
-- **Technical complexity** — Dynamic model discovery, asyncio concurrent probes, SQLite history, Playwright Gemini status adapter, three-layer Sentry integration, research backtest from bundled CSV.
+- **Functionality** — Full probe loop, four-way verdict, alerts, HN + Downdetector corroboration, official status pages, VU dataset backtest, optional Sentry — all implemented, not mocked.
+- **Creativity** — QA probe ("2+2=4"), precursor `degrading` trend, multi-source corroboration as additive signals, honest boundaries on what we can claim.
+- **Technical complexity** — Dynamic model discovery, asyncio concurrent probes, SQLite history, Playwright adapters (Browserbase CDP + optional local Chromium), three-layer Sentry integration, research backtest from bundled CSV.
 
 **Sponsor track note:** Sentry integration (events + fingerprinting + performance traces with API-key redaction) qualifies for the [Best Use of Sentry API](https://ai-hackathon-2026.devpost.com/) prize criteria.
 
@@ -100,7 +102,8 @@ WatchTower AI is organized in layers. Each layer is implemented and live.
 | **Four-way verdict** | Local diagnostics: **your-side**, **account-side**, **service-side**, or **all-clear**. |
 | **Local environment checks** | Per provider: DNS, TCP `:443`, minimal authenticated request. |
 | **Smart alerts** | Rule-based alerts compare tiers, recommend failover, never conflate 429 with "service down". |
-| **Community corroboration** | Hacker News complaint-rate spikes upgrade anomalies — additive only. |
+| **Community corroboration** | Hacker News complaint-rate spikes + optional Downdetector (Browserbase CDP) — additive only. |
+| **Official status pages** | Statuspage JSON (Claude, OpenAI) + Gemini AI Studio adapter; cites provider wording when available. |
 
 #### 3. Research layer — why this matters
 
@@ -124,8 +127,8 @@ WatchTower AI is organized in layers. Each layer is implemented and live.
 
 | Capability | Description |
 | --- | --- |
-| **SQLite history** | `backend/data/watchtower.db`; 7-day retention. |
-| **Frontend proxy** | Next.js `/api/*` routes proxy FastAPI; mock fallback when backend unreachable. |
+| **SQLite history** | `backend/data/watchtower.db`; 7-day retention (ephemeral in Docker unless you mount a volume). |
+| **Frontend proxy** | Next.js `/api/*` routes proxy FastAPI; dashboard shows a clear offline state when backend is unreachable. |
 
 ---
 
@@ -133,13 +136,57 @@ WatchTower AI is organized in layers. Each layer is implemented and live.
 
 #### Requirements
 
+**Docker (recommended for deployment)**
+
+| Tool | Version / notes |
+| --- | --- |
+| **Docker** | Docker Engine + Docker Compose v2 |
+| **API keys** | Optional — missing keys show provider as `unknown` |
+
+**Local development**
+
 | Tool | Version / notes |
 | --- | --- |
 | **Node.js** | **20+** (frontend) |
-| **Python** | **3.11+** (backend) |
+| **Python** | **3.12+** (backend; Docker image uses 3.12-slim) |
 | **API keys** | Optional — missing keys show provider as `unknown` |
 
-#### Quick start
+#### Quick start (Docker)
+
+The fastest way to run WatchTower AI — no Node or Python install on the host.
+
+```bash
+git clone https://github.com/kaiiiichen/WatchTower-AI.git
+cd WatchTower-AI
+cp .env.example .env
+# Edit .env — fill in the API keys you have (see Configuration below)
+docker compose up --build
+```
+
+Open [http://localhost:3000](http://localhost:3000). The frontend container proxies to the backend at `http://backend:8000` inside the compose network.
+
+Verify:
+
+```bash
+curl http://localhost:3000/api/health | jq .
+```
+
+**What the images include**
+
+| Service | Image | Notes |
+| --- | --- | --- |
+| `backend` | `python:3.12-slim` | FastAPI on port 8000 (internal only) |
+| `frontend` | `node:20-alpine` | Next.js standalone on port **3000** (published) |
+
+- Playwright is installed as a Python package but **local browsers are not bundled** — Downdetector connects to remote Browserbase sessions over CDP.
+- Gemini official status uses local Chromium when `GEMINI_STATUS_BROWSER=1` (the default) — that path **does not work in the stock Docker image** (no `playwright install`). Set `GEMINI_STATUS_BROWSER=0` in `.env` to skip it, or use local dev with Chromium installed.
+- Probe history SQLite lives inside the backend container unless you add a volume on `backend/data/`.
+
+Stop: `docker compose down`
+
+#### Quick start (local dev)
+
+For hacking on the codebase with hot reload:
 
 **Backend** (probe engine):
 
@@ -147,7 +194,7 @@ WatchTower AI is organized in layers. Each layer is implemented and live.
 cd backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/playwright install chromium   # Gemini official status (optional)
+.venv/bin/playwright install chromium   # optional — Gemini official status (local headless)
 cp .env.example .env
 # Edit .env — ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
 .venv/bin/uvicorn app.main:app --reload --port 8000
@@ -169,13 +216,27 @@ curl http://localhost:8000/health | jq .
 curl http://localhost:3000/api/health | jq .
 ```
 
-Without `BACKEND_URL`, the dashboard serves **mock data**. Header `x-watchtower-fallback: mock` indicates fallback.
+`BACKEND_URL` is **required** for live data — without it, API routes return `503` with an offline message.
 
 See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md) for package-specific details.
 
 #### Configuration
 
-**Backend** (`backend/.env`) — copy from [backend/.env.example](backend/.env.example):
+**Docker** — copy [`.env.example`](.env.example) to `.env` at the **repo root** (used by `docker compose`):
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key |
+| `OPENAI_API_KEY` | — | OpenAI API key |
+| `GEMINI_API_KEY` | — | Google AI key |
+| `DOWNDETECTOR_ENABLED` | `0` | Set `1` to enable Downdetector corroboration |
+| `BROWSERBASE_API_KEY` | — | Browserbase API key (required when Downdetector enabled) |
+| `DOWNDETECTOR_SUMMARY_MODEL` | `claude-3-5-haiku-latest` | Model for Downdetector comment summaries |
+| `SENTRY_DSN` | — | Sentry DSN (unset = disabled) |
+
+`BACKEND_URL` and `CORS_ORIGINS` are set automatically in [`docker-compose.yml`](docker-compose.yml).
+
+**Local dev — backend** (`backend/.env`) — copy from [backend/.env.example](backend/.env.example):
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -184,13 +245,16 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 | `GEMINI_API_KEY` | — | Google AI key (alias: `GOOGLE_API_KEY`) |
 | `PROBE_INTERVAL` | `30` | Seconds between probe cycles |
 | `PROBE_TIMEOUT` | `20` | Per-request timeout (seconds) |
+| `DOWNDETECTOR_ENABLED` | off | Downdetector via Browserbase CDP |
+| `BROWSERBASE_API_KEY` | — | Browserbase API key |
+| `DOWNDETECTOR_SUMMARY_MODEL` | `claude-3-5-haiku-latest` | Summary model for Downdetector |
 | `SENTRY_DSN` | — | Sentry DSN (unset = disabled) |
-| `GEMINI_STATUS_BROWSER` | `1` | Headless Chromium for Gemini official status |
+| `GEMINI_STATUS_BROWSER` | `1` | Local headless Chromium for Gemini official status |
 | `ENABLE_DOCS` | off | Set `1` for `/docs` and OpenAPI |
 
 Model env vars (`ANTHROPIC_MODEL`, etc.) are **fallbacks only** when dynamic discovery fails.
 
-**Frontend** (`frontend/.env.local`):
+**Local dev — frontend** (`frontend/.env.local`):
 
 | Variable | Description |
 | --- | --- |
@@ -216,24 +280,27 @@ Types shared in `frontend/src/lib/types.ts` and `backend/app/models.py`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Browser  →  Next.js (localhost:3000)                         │
-│    Dashboard · Provider cards · Alerts · Diagnostics · Backtest │
+│  Browser  →  localhost:3000                                     │
+│    Next.js dashboard (theme, provider cards, alerts, backtest)  │
 │    Polls /api/health every 30s                                  │
 └───────────────────────────┬─────────────────────────────────────┘
-                            │ BACKEND_URL (optional)
+                            │ BACKEND_URL
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  FastAPI Probe Engine (localhost:8000)                          │
-│  Probe loop (30s) · Community loop (60s) · SQLite history     │
-│  Claude / GPT / Gemini (QA probe + scoring) · HN corroboration  │
+│  FastAPI probe engine (:8000)                                   │
+│  Probe loop (30s) · Community hub (HN + Downdetector)           │
+│  Official status (Statuspage + Gemini adapter) · SQLite history │
 │  GET /health · GET /diagnose · GET /backtest · Sentry (optional)│
 └─────────────────────────────────────────────────────────────────┘
+
+Docker Compose runs both services; only port 3000 is published.
 ```
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | Next.js 16 + React 19 + Tailwind CSS 4 |
-| Backend | FastAPI + asyncio + httpx |
+| Frontend | Next.js 16 (standalone) + React 19 + Tailwind CSS 4 |
+| Backend | FastAPI + asyncio + httpx + Playwright (CDP) |
+| Packaging | Docker Compose (`backend/Dockerfile`, `frontend/Dockerfile`) |
 | Persistence | SQLite (stdlib `sqlite3`) |
 | Observability | Sentry SDK (optional) |
 | Research data | VU Amsterdam status-page dataset (bundled CSV) |
@@ -257,22 +324,27 @@ Types shared in `frontend/src/lib/types.ts` and `backend/app/models.py`.
 #### Product philosophy
 
 - **You run it** — keys and probe history stay on your machine.
-- **Corroboration, not dependency** — HN signals upgrade alerts but never block core detection.
+- **Corroboration, not dependency** — HN, Downdetector, and official status upgrade alerts but never block core detection.
 - **Honest numbers** — backtest metrics computed from CSV; estimates flagged.
-- **Right cuts** — dropped BrowserBase scraping, StatusGator, ML classifiers to keep one complete story.
+- **Shippable** — Docker Compose for one-command deploy; local dev path for contributors.
 
 #### Project structure
 
 ```
 WatchTower-AI/
 ├── README.md
+├── docker-compose.yml
+├── .env.example              # Docker runtime env (copy to .env)
 ├── LICENSE · CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md
 ├── backend/
-│   ├── app/           # main.py, probes.py, diagnostics.py, community.py, …
-│   ├── data/          # vu_dataset/ (bundled), watchtower.db (local, gitignored)
+│   ├── Dockerfile
+│   ├── .env.example          # Local dev env
+│   ├── app/                  # main.py, probes.py, community_hub.py, …
+│   ├── data/                 # vu_dataset/ (bundled), watchtower.db (local, gitignored)
 │   └── tests/
 └── frontend/
-    └── src/           # app/, components/, lib/types.ts
+    ├── Dockerfile
+    └── src/                  # app/, components/, lib/
 ```
 
 #### Testing
@@ -293,11 +365,17 @@ npm run build
 
 #### Deployment notes
 
-| Component | Target | Notes |
+| Path | When to use | Notes |
 | --- | --- | --- |
-| Frontend | Vercel | Set `BACKEND_URL` to probe engine URL |
-| Backend | Railway, Fly.io, etc. | Outbound HTTPS to provider APIs; persist `data/` for SQLite |
-| Secrets | Env vars only | Never commit `.env` |
+| **Docker Compose** | Quick deploy, demos, self-hosting | `docker compose up --build` — see [Quick start (Docker)](#quick-start-docker) |
+| **Vercel + PaaS** | Split frontend/backend | Set `BACKEND_URL` on Vercel; run backend on Railway, Fly.io, etc. |
+| **Local dev** | Contributing | Hot reload — see [Quick start (local dev)](#quick-start-local-dev) |
+
+| Concern | Guidance |
+| --- | --- |
+| Secrets | Env vars only — never commit `.env` |
+| SQLite persistence | Mount `backend/data/` as a volume in production Docker |
+| Outbound network | Backend needs HTTPS to provider APIs (+ Browserbase if Downdetector enabled) |
 
 #### Documentation map
 
@@ -310,7 +388,8 @@ npm run build
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
 | [SECURITY.md](SECURITY.md) | Responsible disclosure |
 | [frontend/AGENTS.md](frontend/AGENTS.md) | AI agent / Next.js 16 notes |
-| [backend/.env.example](backend/.env.example) | Backend env var names |
+| [backend/.env.example](backend/.env.example) | Backend env var names (local dev) |
+| [.env.example](.env.example) | Docker Compose env var names |
 
 #### License
 
@@ -332,6 +411,11 @@ API keys and local `watchtower.db` are yours — do not commit them.
 2. [UC Berkeley AI Hackathon 2026](#uc-berkeley-ai-hackathon-2026-1)
 3. [功能概览](#功能概览)
 4. [技术参考](#技术参考-1)
+   - [环境要求](#环境要求)
+   - [快速开始（Docker）](#快速开始docker)
+   - [快速开始（本地开发）](#快速开始本地开发)
+   - [配置](#配置)
+   - [部署说明](#部署说明)
 
 ### 理念
 
@@ -364,27 +448,60 @@ API keys and local `watchtower.db` are yours — do not commit them.
 | 层级 | 能力 |
 | --- | --- |
 | **探测层** | 30 秒并发探测、动态模型发现、QA 探针、健康评分、前兆 `degrading` 预警 |
-| **归因层** | 四方裁决（你的环境 / 账户 / 服务 / 一切正常）、本地 DNS/TCP/密钥检查、HN 社区佐证 |
+| **归因层** | 四方裁决（你的环境 / 账户 / 服务 / 一切正常）、本地 DNS/TCP/密钥检查、HN + Downdetector 社区佐证、官方状态页 |
 | **研究层** | VU Amsterdam 数据集回测 —— 29.7% 事件从未实时标记为 investigating |
 | **可观测性** | Sentry 三层集成（事件、指纹分组、性能追踪）+ API 密钥脱敏 |
-| **持久化** | SQLite 探测历史、Next.js API 代理与 mock 回退 |
+| **持久化** | SQLite 探测历史、Next.js API 代理（后端离线时明确提示） |
+| **部署** | Docker Compose 一键打包前后端 |
 
 ### 技术参考
 
 #### 环境要求
 
+**Docker（推荐，用于部署）**
+
+| 工具 | 说明 |
+| --- | --- |
+| Docker | Docker Engine + Docker Compose v2 |
+| API 密钥 | 可选 —— 缺失则对应提供商显示 `unknown` |
+
+**本地开发**
+
 | 工具 | 版本 |
 | --- | --- |
 | Node.js | 20+ |
-| Python | 3.11+ |
+| Python | 3.12+ |
 | API 密钥 | 可选 |
 
-#### 快速开始
+#### 快速开始（Docker）
+
+无需在宿主机安装 Node 或 Python：
+
+```bash
+git clone https://github.com/kaiiiichen/WatchTower-AI.git
+cd WatchTower-AI
+cp .env.example .env
+# 编辑 .env，填入 API 密钥
+docker compose up --build
+```
+
+打开 [http://localhost:3000](http://localhost:3000)。前端容器通过 compose 内网访问 `http://backend:8000`。
+
+```bash
+curl http://localhost:3000/api/health | jq .
+```
+
+停止：`docker compose down`
+
+**说明：** 镜像内不 bundled 本地浏览器；Downdetector 通过 Browserbase 远程 CDP 连接。SQLite 历史默认存在容器内，生产环境建议挂载 `backend/data/` 卷。
+
+#### 快速开始（本地开发）
 
 ```bash
 # 后端
 cd backend && python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/playwright install chromium   # 可选 —— Gemini 官方状态页
 cp .env.example .env   # 填入密钥
 .venv/bin/uvicorn app.main:app --reload --port 8000
 
@@ -394,12 +511,41 @@ echo 'BACKEND_URL=http://localhost:8000' > .env.local
 npm run dev
 ```
 
-打开 [http://localhost:3000](http://localhost:3000)。
+打开 [http://localhost:3000](http://localhost:3000)。未设置 `BACKEND_URL` 时 API 返回 `503` 离线提示。
+
+#### 配置
+
+**Docker** —— 复制根目录 [`.env.example`](.env.example) 为 `.env`：
+
+| 变量 | 说明 |
+| --- | --- |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | 提供商 API 密钥 |
+| `DOWNDETECTOR_ENABLED` | `1` 启用 Downdetector 佐证 |
+| `BROWSERBASE_API_KEY` | Browserbase 密钥（启用 Downdetector 时需要） |
+| `DOWNDETECTOR_SUMMARY_MODEL` | Downdetector 评论摘要模型 |
+| `SENTRY_DSN` | Sentry DSN（可选） |
+
+`BACKEND_URL` 与 `CORS_ORIGINS` 已在 [`docker-compose.yml`](docker-compose.yml) 中自动配置。
+
+**本地开发** —— 后端见 [backend/.env.example](backend/.env.example)，前端设置 `BACKEND_URL=http://localhost:8000`。
+
+#### 部署说明
+
+| 方式 | 适用场景 |
+| --- | --- |
+| **Docker Compose** | 快速部署、演示、自托管 |
+| **Vercel + PaaS** | 前后端分离部署 |
+| **本地开发** | 贡献代码、热重载 |
+
+密钥仅通过环境变量注入，切勿提交 `.env`。
 
 #### 文档索引
 
 | 文件 | 内容 |
 | --- | --- |
+| **README.md** | 本文件 —— 理念、Docker 部署、技术参考 |
+| [.env.example](.env.example) | Docker Compose 环境变量 |
+| [docker-compose.yml](docker-compose.yml) | 前后端容器编排 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 行为准则 |
 | [SECURITY.md](SECURITY.md) | 安全披露 |
