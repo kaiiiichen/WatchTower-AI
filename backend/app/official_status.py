@@ -24,6 +24,7 @@ log = logging.getLogger("watchtower.official_status")
 IMPACT_LABELS = {
     "critical": "Critical impact",
     "major": "Major impact",
+    "minor": "Minor impact",
 }
 
 COMPONENT_STATUS_RANK = {
@@ -64,7 +65,7 @@ def _now_iso() -> str:
 
 
 def _impact_label(impact: str) -> str:
-    return IMPACT_LABELS[impact]
+    return IMPACT_LABELS.get(impact, impact.capitalize() + " impact")
 
 
 def _worst_component_status(components: list[dict], match: Callable[[str], bool]) -> str:
