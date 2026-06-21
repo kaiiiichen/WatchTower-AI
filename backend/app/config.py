@@ -69,3 +69,9 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_MODEL_MID = os.getenv("OPENAI_MODEL_MID", "gpt-4o-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
 GEMINI_MODEL_MID = os.getenv("GEMINI_MODEL_MID", "gemini-1.5-flash")
+
+# --- Sentry ----------------------------------------------------------------
+# SENTRY_DSN unset -> Sentry is disabled (capture/spans become no-ops).
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "watchtower")
+SENTRY_TRACES_SAMPLE_RATE = _env_float("SENTRY_TRACES_SAMPLE_RATE", "1.0")

@@ -1,6 +1,7 @@
 node_modules/
 .next/
 .env*
+!.env.example
 .DS_Store
 __pycache__/
 .venv/
