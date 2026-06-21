@@ -19,7 +19,13 @@ export async function GET() {
   const backend = process.env.BACKEND_URL;
   if (backend && isAllowedBackendUrl(backend)) {
     try {
-      const res = await fetch(`${backend}/backtest`, { cache: "no-store" });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${backend}/backtest`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
       if (!res.ok) throw new Error(`backend HTTP ${res.status}`);
       return NextResponse.json(await res.json());
     } catch (err: unknown) {
