@@ -15,6 +15,15 @@ function makeHistory(base: number, spread: number, n = 20) {
   }));
 }
 
+// A steadily rising latency ramp — the visual signature of a "degrading" trend.
+function makeRisingHistory(start: number, end: number, n = 20) {
+  const now = Date.now();
+  return Array.from({ length: n }, (_, i) => ({
+    t: new Date(now - (n - 1 - i) * 30_000).toISOString(),
+    ms: Math.max(50, Math.round(start + (end - start) * (i / (n - 1))) + jitter(0, 60)),
+  }));
+}
+
 interface ProviderSeed {
   id: string;
   name: string;
@@ -28,6 +37,7 @@ interface ProviderSeed {
   qaCorrect: boolean | (() => boolean);
   historyLatency: number;
   historySpread: number;
+  rising?: boolean; // render a rising latency ramp (for "degrading")
 }
 
 function makeProvider(seed: ProviderSeed): ProviderHealth {
@@ -39,7 +49,9 @@ function makeProvider(seed: ProviderSeed): ProviderHealth {
     latencyMs: jitter(seed.baseLatency, seed.latencySpread),
     tokenRate: jitter(seed.baseTokenRate, seed.tokenRateSpread),
     qaCorrect: typeof seed.qaCorrect === "function" ? seed.qaCorrect() : seed.qaCorrect,
-    latencyHistory: makeHistory(seed.historyLatency, seed.historySpread),
+    latencyHistory: seed.rising
+      ? makeRisingHistory(seed.historyLatency * 0.45, seed.historyLatency)
+      : makeHistory(seed.historyLatency, seed.historySpread),
   };
 }
 
@@ -51,10 +63,11 @@ const PROVIDER_SEEDS: ProviderSeed[] = [
     historyLatency: 820, historySpread: 180,
   },
   {
-    id: "gpt", name: "GPT", status: "operational",
-    baseHealth: 96, healthSpread: 5, baseLatency: 910, latencySpread: 140,
-    baseTokenRate: 68, tokenRateSpread: 8, qaCorrect: true,
-    historyLatency: 910, historySpread: 200,
+    // Still healthy NOW (high score) but latency steadily climbing -> "degrading".
+    id: "gpt", name: "GPT", status: "degrading",
+    baseHealth: 90, healthSpread: 3, baseLatency: 1500, latencySpread: 80,
+    baseTokenRate: 55, tokenRateSpread: 6, qaCorrect: true,
+    historyLatency: 1500, historySpread: 200, rising: true,
   },
   {
     // Real-world case from the probe diagnosis: Gemini flagship returns HTTP 429
@@ -91,6 +104,21 @@ export function buildMockSnapshot(): Omit<HealthSnapshot, "source"> {
   return {
     providers: PROVIDER_SEEDS.map(makeProvider),
     alerts: [
+      {
+        id: "alert-gpt-degrading",
+        severity: "info",
+        providerId: "gpt",
+        title: "GPT flagship (gpt-5) performance is trending down",
+        attribution:
+          "Early-warning trend, not a fault yet — latency has climbed ~120% over the last 5 probes (680→1500ms) while still responding. Predicted from the live latency curve, before any outage.",
+        recoveryEta: "Predictive — no incident yet; watching the trend.",
+        recommendedAlternative:
+          "Pre-warm Claude flagship (claude-opus-4-8) in case this continues.",
+        insight:
+          "⚠️ GPT flagship is steadily degrading and may be heading toward a problem. Latency keeps climbing while it still responds — a pre-emptive heads-up from the real-time trend, no incident has occurred yet.",
+        communityConfirmed: false,
+        createdAt: new Date().toISOString(),
+      },
       {
         id: "alert-gemini-rate_limited",
         severity: "warning",

@@ -17,6 +17,7 @@ from app.probes import (
     _run_one,
     _score_and_status,
     _token_rate,
+    latency_trend,
     pick_latest,
     probe_all,
 )
@@ -600,3 +601,120 @@ class TestProbeAll:
         asyncio.get_event_loop().run_until_complete(run())
         snap = state.snapshot()
         assert snap["providers"][0]["status"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# latency_trend — precursor "degrading" detection (jitter-safe)
+# ---------------------------------------------------------------------------
+
+class TestLatencyTrend:
+    def test_not_enough_samples_returns_none(self):
+        assert latency_trend([300, 600, 900]) is None  # < TREND_WINDOW (5)
+
+    def test_steady_rise_is_degrading(self):
+        assert latency_trend([300, 500, 800, 1100, 1400])["degrading"] is True
+
+    def test_flat_is_not_degrading(self):
+        assert latency_trend([800, 805, 798, 802, 800])["degrading"] is False
+
+    def test_jitter_is_not_degrading(self):
+        # Oscillates within normal noise — must not trip.
+        assert latency_trend([800, 950, 700, 920, 760])["degrading"] is False
+
+    def test_small_relative_rise_is_not_degrading(self):
+        # Monotonic but only ~12% over the window (< 50% threshold).
+        assert latency_trend([900, 920, 950, 980, 1010])["degrading"] is False
+
+    def test_big_ratio_but_tiny_absolute_is_not_degrading(self):
+        # 50->95ms is +90% but only +45ms (< TREND_MIN_RISE_MS) — fast provider jitter.
+        assert latency_trend([50, 60, 72, 84, 95])["degrading"] is False
+
+    def test_one_dip_tolerated(self):
+        # A single blip down, still a clear climb overall.
+        assert latency_trend([300, 500, 450, 1000, 1500])["degrading"] is True
+
+    def test_two_dips_not_degrading(self):
+        assert latency_trend([300, 250, 900, 1400, 1300])["degrading"] is False
+
+    def test_uses_only_last_window(self):
+        # Leading flat history shouldn't dilute a recent clear rise.
+        series = [800, 800, 800, 300, 500, 800, 1200, 1600]
+        assert latency_trend(series)["degrading"] is True
+
+
+class TestTrendStatusIntegration:
+    def _target(self):
+        return {"id": "gpt-flagship", "name": "GPT", "tier": "flagship",
+                "model": "gpt-5", "probe": None, "has_key": True}
+
+    def _apply_series(self, latencies, qa=True, status_ok=200):
+        t = self._target()
+        state = ProbeState([t])
+        for ms in latencies:
+            state.apply(t, ProbeResult(available=True, latency_ms=ms,
+                                       qa_correct=qa, token_rate=50, http_status=status_ok))
+        return state._latest[t["id"]]
+
+    def test_rising_healthy_provider_becomes_degrading(self):
+        # Each latency still scores operational, but the trend is clearly rising.
+        p = self._apply_series([300, 500, 800, 1100, 1400])
+        assert p["status"] == "degrading"
+        assert p["healthScore"] >= 85  # still healthy NOW — it's a precursor
+
+    def test_stable_provider_stays_operational(self):
+        p = self._apply_series([400, 410, 395, 405, 400])
+        assert p["status"] == "operational"
+
+    def test_trend_does_not_override_real_fault(self):
+        # A rising series that ends in a 500 must stay "down", not "degrading".
+        t = self._target()
+        state = ProbeState([t])
+        for ms in [300, 500, 800, 1100]:
+            state.apply(t, ProbeResult(True, ms, True, 50, 200))
+        state.apply(t, ProbeResult(False, 1400, False, 0, 500))
+        assert state._latest[t["id"]]["status"] == "down"
+
+
+class TestDegradingAlert:
+    def _degrading_provider(self):
+        history = [{"t": "x", "ms": ms} for ms in [300, 500, 800, 1100, 1400]]
+        return {
+            "id": "gpt-flagship", "name": "GPT", "status": "degrading",
+            "healthScore": 92, "latencyMs": 1400, "qaCorrect": True,
+            "tier": "flagship", "model": "gpt-5", "latencyHistory": history,
+        }
+
+    def test_degrading_emits_info_alert(self):
+        providers = [
+            {"id": "claude", "name": "Claude", "status": "operational",
+             "healthScore": 98, "latencyMs": 400, "qaCorrect": True,
+             "tier": "flagship", "model": "m", "latencyHistory": []},
+            self._degrading_provider(),
+        ]
+        alerts = _build_alerts(providers)
+        a = next(x for x in alerts if x["providerId"] == "gpt-flagship")
+        assert a["severity"] == "info"  # heads-up, not an incident
+        assert "trending down" in a["title"].lower()
+        assert "⚠️" in a["insight"]
+        assert a["communityConfirmed"] is False
+        # Forward-looking copy: prediction, not post-hoc alarm.
+        assert "no incident" in a["insight"].lower()
+
+    def test_operational_provider_has_no_alert(self):
+        providers = [
+            {"id": "claude", "name": "Claude", "status": "operational",
+             "healthScore": 98, "latencyMs": 400, "qaCorrect": True,
+             "tier": "flagship", "model": "m", "latencyHistory": []},
+        ]
+        assert _build_alerts(providers) == []
+
+    def test_degrading_not_recommended_as_failover(self):
+        # We should not route TO a provider that's trending down.
+        providers = [
+            self._degrading_provider(),
+            {"id": "gemini", "name": "Gemini", "status": "down",
+             "healthScore": 0, "latencyMs": 0, "qaCorrect": False,
+             "tier": "flagship", "model": "g", "latencyHistory": []},
+        ]
+        down_alert = next(x for x in _build_alerts(providers) if x["providerId"] == "gemini")
+        assert "GPT" not in down_alert["recommendedAlternative"]
