@@ -71,6 +71,56 @@ export interface CommunitySignal {
   sampledAt?: string | null;
 }
 
+// --- Detection lead-time backtest (VU Amsterdam dataset) -------------------
+export interface StageStat {
+  n: number;
+  medianMin: number;
+  meanMin: number; // long-tail-skewed
+  p25Min: number;
+  p75Min: number;
+  maxMin: number;
+}
+
+export interface ProviderLatency {
+  investigatingToResolved?: StageStat | null;
+  investigatingToIdentified?: StageStat | null;
+}
+
+export interface CoverageStat {
+  scope: string;
+  total: number;
+  noInvestigating: number;
+  pct: number;
+}
+
+export interface HistogramBin {
+  label: string;
+  count: number;
+}
+
+export interface CaseTimeline {
+  incidentId: string;
+  provider: string;
+  title: string;
+  impactWindowText: string;
+  impactStart: string; // ESTIMATE — parsed from official description text
+  investigating: string;
+  identified?: string | null;
+  resolved?: string | null;
+  ackGapMin: number;
+  impactStartEstimated: boolean;
+}
+
+export interface BacktestReport {
+  datasetDate: string;
+  coverage: Record<string, CoverageStat>;
+  latency: Record<string, ProviderLatency>;
+  resolvedHistogram: HistogramBin[];
+  histogramNote: string;
+  caseTimelines: CaseTimeline[];
+  notes: Record<string, string>;
+}
+
 export type DataSource = "live" | "mock";
 
 export interface HealthSnapshot {
