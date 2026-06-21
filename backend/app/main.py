@@ -10,9 +10,9 @@ from fastapi import FastAPI
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import config, diagnostics
+from . import backtest, config, diagnostics
 from .community import CommunityState
-from .models import HealthSnapshot, LocalDiagnosis
+from .models import BacktestReport, HealthSnapshot, LocalDiagnosis
 from .monitoring import init_sentry
 from .probes import ProbeState, build_targets, probe_all
 
@@ -135,6 +135,17 @@ async def diagnose() -> LocalDiagnosis:
         providers = app.state.probe_state.snapshot()["providers"]
     result = await diagnostics.diagnose(app.state.client, providers)
     return LocalDiagnosis(**result)
+
+
+@app.get("/backtest", response_model=BacktestReport)
+async def backtest_report() -> BacktestReport:
+    """Detection lead-time backtest over the VU Amsterdam dataset. All numbers
+    computed from the CSV; the one estimated quantity (impact-window start) is
+    flagged. Returns 503 if the dataset isn't bundled with the deployment."""
+    try:
+        return BacktestReport(**backtest.build_report())
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="VU dataset not available")
 
 
 @app.get("/")

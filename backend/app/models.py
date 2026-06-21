@@ -92,6 +92,56 @@ class LocalDiagnosis(BaseModel):
     checkedAt: str
 
 
+# --- Detection lead-time backtest (VU Amsterdam dataset) -------------------
+class StageStat(BaseModel):
+    n: int
+    medianMin: float
+    meanMin: float  # long-tail-skewed — labelled as such in the UI
+    p25Min: float
+    p75Min: float
+    maxMin: float
+
+
+class ProviderLatency(BaseModel):
+    investigatingToResolved: StageStat | None = None
+    investigatingToIdentified: StageStat | None = None
+
+
+class CoverageStat(BaseModel):
+    scope: str
+    total: int
+    noInvestigating: int  # incidents never marked "investigating" in real time
+    pct: float
+
+
+class HistogramBin(BaseModel):
+    label: str
+    count: int
+
+
+class CaseTimeline(BaseModel):
+    incidentId: str
+    provider: str
+    title: str
+    impactWindowText: str  # the raw "HH:MM-HH:MM" from the official description
+    impactStart: str  # ISO — ESTIMATE (parsed from text, date inferred)
+    investigating: str
+    identified: str | None = None
+    resolved: str | None = None
+    ackGapMin: float
+    impactStartEstimated: bool  # always True; surfaces the estimate in the UI
+
+
+class BacktestReport(BaseModel):
+    datasetDate: str
+    coverage: dict[str, CoverageStat]
+    latency: dict[str, ProviderLatency]
+    resolvedHistogram: list[HistogramBin]
+    histogramNote: str
+    caseTimelines: list[CaseTimeline]
+    notes: dict[str, str]
+
+
 DataSource = Literal["live", "mock"]
 
 

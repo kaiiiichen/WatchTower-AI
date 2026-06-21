@@ -1,4 +1,9 @@
-import type { HealthSnapshot, LocalDiagnosis, ProviderHealth } from "./types";
+import type {
+  BacktestReport,
+  HealthSnapshot,
+  LocalDiagnosis,
+  ProviderHealth,
+} from "./types";
 
 // Deterministic-ish fake data generator for the walking skeleton.
 // Produces a fresh snapshot each call so the 30s polling visibly updates.
@@ -84,6 +89,76 @@ export function buildMockDiagnosis(): LocalDiagnosis {
     verdict:
       "Your environment is fine — but Gemini (quota/rate limit) is on your account layer (quota/config), NOT a service outage.",
     checkedAt: now,
+  };
+}
+
+// Detection lead-time backtest — the EXACT numbers the backend computes from the
+// VU Amsterdam dataset (verified equal to backend output). Used for standalone
+// dev; never re-rounded so the figures stay truthful.
+export function buildMockBacktest(): BacktestReport {
+  return {
+    datasetDate: "2024-08-31",
+    coverage: {
+      all: { scope: "all", total: 542, noInvestigating: 161, pct: 29.7 },
+      anthropic: { scope: "anthropic", total: 141, noInvestigating: 45, pct: 31.9 },
+      openai: { scope: "openai", total: 365, noInvestigating: 106, pct: 29.0 },
+    },
+    latency: {
+      all: {
+        investigatingToResolved: { n: 381, medianMin: 73.0, meanMin: 163.8, p25Min: 31.0, p75Min: 164.0, maxMin: 4907.0 },
+        investigatingToIdentified: { n: 126, medianMin: 27.5, meanMin: 50.2, p25Min: 9.0, p75Min: 59.0, maxMin: 588.0 },
+      },
+      anthropic: {
+        investigatingToResolved: { n: 96, medianMin: 55.5, meanMin: 144.5, p25Min: 20.0, p75Min: 109.5, maxMin: 3030.0 },
+        investigatingToIdentified: { n: 36, medianMin: 23.0, meanMin: 65.5, p25Min: 7.0, p75Min: 57.8, maxMin: 588.0 },
+      },
+      openai: {
+        investigatingToResolved: { n: 259, medianMin: 78.0, meanMin: 169.0, p25Min: 35.0, p75Min: 171.0, maxMin: 4907.0 },
+        investigatingToIdentified: { n: 84, medianMin: 31.5, meanMin: 45.5, p25Min: 13.0, p75Min: 62.8, maxMin: 225.0 },
+      },
+    },
+    resolvedHistogram: [
+      { label: "0-15m", count: 29 },
+      { label: "15-30m", count: 59 },
+      { label: "30-60m", count: 73 },
+      { label: "60-120m", count: 97 },
+      { label: "120-240m", count: 63 },
+      { label: "240-480m", count: 41 },
+      { label: "480m+", count: 19 },
+    ],
+    histogramNote:
+      "investigating→resolved, all providers (N=381). Final bin absorbs the long tail.",
+    caseTimelines: [
+      {
+        incidentId: "787xfxkthx3c",
+        provider: "anthropic",
+        title: "Elevated errors rates on API",
+        impactWindowText: "15:38–16:29",
+        impactStart: "2024-08-13T15:38:00+00:00",
+        investigating: "2024-08-13T16:01:00+00:00",
+        identified: "",
+        resolved: "2024-08-13 16:32:00+00:00",
+        ackGapMin: 23.0,
+        impactStartEstimated: true,
+      },
+      {
+        incidentId: "6l0r96skc6cb",
+        provider: "anthropic",
+        title: "Additional Rate Limits are being applied for API customers",
+        impactWindowText: "19:01–19:12",
+        impactStart: "2024-08-01T19:01:00+00:00",
+        investigating: "2024-08-01T19:33:00+00:00",
+        identified: "2024-08-01 19:46:00+00:00",
+        resolved: "2024-08-01 21:21:00+00:00",
+        ackGapMin: 32.0,
+        impactStartEstimated: true,
+      },
+    ],
+    notes: {
+      A: "Official internal response latency — real. Median is the headline; mean is long-tail-skewed.",
+      B: "Impact window parsed from official incident description text; date inferred from the incident's UTC day — an ESTIMATE.",
+      C: "Coverage gap — 100% real, no estimation.",
+    },
   };
 }
 

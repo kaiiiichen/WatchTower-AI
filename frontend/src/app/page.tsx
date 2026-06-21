@@ -6,6 +6,7 @@ import ProviderCard from "@/components/ProviderCard";
 import AlertBanner from "@/components/AlertBanner";
 import CommunitySignals from "@/components/CommunitySignals";
 import LocalDiagnostics from "@/components/LocalDiagnostics";
+import DetectionGap from "@/components/DetectionGap";
 
 const POLL_MS = 30_000;
 
@@ -85,6 +86,8 @@ export default function Dashboard() {
         </section>
 
         <LocalDiagnostics />
+
+        <DetectionGap />
 
         {snap?.community?.length ? (
           <CommunitySignals signals={snap.community} />
