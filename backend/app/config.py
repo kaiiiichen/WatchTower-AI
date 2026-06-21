@@ -46,6 +46,9 @@ PROBE_INTERVAL = _env_int("PROBE_INTERVAL", "30")
 HISTORY_LEN = _env_int("HISTORY_LEN", "20")
 # Per-request timeout for a single probe.
 PROBE_TIMEOUT = _env_float("PROBE_TIMEOUT", "20")
+# Per-check timeout for local diagnostics (DNS/TCP/key) — kept short so /diagnose
+# stays snappy and a hung check degrades to "unknown" quickly.
+DIAGNOSTIC_TIMEOUT = _env_float("DIAGNOSTIC_TIMEOUT", "5")
 
 # Disable OpenAPI/docs in production (set ENABLE_DOCS=1 for local dev).
 ENABLE_DOCS = os.getenv("ENABLE_DOCS", "").strip() in ("1", "true", "yes")
@@ -69,6 +72,31 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_MODEL_MID = os.getenv("OPENAI_MODEL_MID", "gpt-4o-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
 GEMINI_MODEL_MID = os.getenv("GEMINI_MODEL_MID", "gemini-1.5-flash")
+
+# --- Community signals (Reddit) --------------------------------------------
+# Corroboration layer, NOT a dependency: if Reddit is unreachable the probe
+# pipeline is unaffected and signals report "unavailable".
+#
+# Reddit's public JSON needs no auth but DOES require a unique User-Agent or it
+# rate-limits hard (HTTP 429). Format: "platform:app-id:version (by /u/user)".
+REDDIT_USER_AGENT = os.getenv(
+    "REDDIT_USER_AGENT", "python:watchtower-ai:v1.0 (by /u/watchtower_ai)"
+)
+# How often to poll Reddit (seconds). Kept well above Reddit's rate-limit floor.
+COMMUNITY_INTERVAL = _env_int("COMMUNITY_INTERVAL", "60")
+# Posts pulled per subreddit per poll.
+COMMUNITY_POST_LIMIT = _env_int("COMMUNITY_POST_LIMIT", "25")
+# Rolling complaint-rate samples kept per subreddit for the spike baseline.
+COMMUNITY_BASELINE_LEN = _env_int("COMMUNITY_BASELINE_LEN", "20")
+# Min samples before a baseline is trustworthy enough to flag a spike.
+COMMUNITY_MIN_BASELINE = _env_int("COMMUNITY_MIN_BASELINE", "3")
+# A "spike" needs the rate both meaningfully high in absolute terms ...
+COMMUNITY_SPIKE_MIN_RATE = _env_float("COMMUNITY_SPIKE_MIN_RATE", "0.28")
+# ... and clearly above its own rolling baseline (factor + absolute delta).
+COMMUNITY_SPIKE_FACTOR = _env_float("COMMUNITY_SPIKE_FACTOR", "2.0")
+COMMUNITY_SPIKE_DELTA = _env_float("COMMUNITY_SPIKE_DELTA", "0.12")
+# "elevated" (noteworthy but not confirmed) sits between baseline and spike.
+COMMUNITY_ELEVATED_DELTA = _env_float("COMMUNITY_ELEVATED_DELTA", "0.06")
 
 # --- Sentry ----------------------------------------------------------------
 # SENTRY_DSN unset -> Sentry is disabled (capture/spans become no-ops).

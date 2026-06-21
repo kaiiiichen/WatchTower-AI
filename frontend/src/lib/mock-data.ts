@@ -1,4 +1,4 @@
-import type { HealthSnapshot, ProviderHealth } from "./types";
+import type { HealthSnapshot, LocalDiagnosis, ProviderHealth } from "./types";
 
 // Deterministic-ish fake data generator for the walking skeleton.
 // Produces a fresh snapshot each call so the 30s polling visibly updates.
@@ -57,33 +57,89 @@ const PROVIDER_SEEDS: ProviderSeed[] = [
     historyLatency: 910, historySpread: 200,
   },
   {
-    id: "gemini", name: "Gemini", status: "degraded",
-    baseHealth: 61, healthSpread: 8, baseLatency: 2400, latencySpread: 500,
-    baseTokenRate: 31, tokenRateSpread: 10, qaCorrect: () => Math.random() > 0.4,
-    historyLatency: 2200, historySpread: 900,
+    // Real-world case from the probe diagnosis: Gemini flagship returns HTTP 429
+    // (daily quota exhausted). That's an ACCOUNT problem, not an outage — so it
+    // renders as orange "Rate limited", never red "Down".
+    id: "gemini", name: "Gemini", status: "rate_limited",
+    baseHealth: 0, healthSpread: 0, baseLatency: 180, latencySpread: 40,
+    baseTokenRate: 0, tokenRateSpread: 0, qaCorrect: false,
+    historyLatency: 800, historySpread: 200,
   },
 ];
+
+// Mock diagnosis for standalone dev: local all-green, and since the mock Gemini
+// is rate-limited (your account) there's no SERVICE anomaly -> all-clear.
+export function buildMockDiagnosis(): LocalDiagnosis {
+  const now = new Date().toISOString();
+  const checks = (["Claude", "GPT", "Gemini"] as const).flatMap((provider) => [
+    { provider, check: "dns", status: "pass" as const, detail: "resolved host" },
+    { provider, check: "tcp", status: "pass" as const, detail: "connected to :443" },
+    { provider, check: "key", status: "pass" as const, detail: "key valid (HTTP 200)" },
+  ]);
+  return {
+    checks,
+    localHealthy: true,
+    verdictKind: "all-clear",
+    verdict: "All clear — your environment and every probed service look healthy.",
+    checkedAt: now,
+  };
+}
 
 export function buildMockSnapshot(): Omit<HealthSnapshot, "source"> {
   return {
     providers: PROVIDER_SEEDS.map(makeProvider),
     alerts: [
       {
-        id: "alert-gemini-latency",
+        id: "alert-gemini-rate_limited",
         severity: "warning",
         providerId: "gemini",
-        title: "Gemini latency spike & QA degradation",
+        title: "Gemini flagship (gemini-3.1-pro-preview) is rate-limited",
         attribution:
-          "Cloud-side. Your network and local environment look healthy — 2 other providers respond normally from the same probe.",
+          "Your account: Gemini returned HTTP 429 (rate/quota limit) for gemini-3.1-pro-preview — an account-side limit on your key, not a Gemini outage.",
         recoveryEta:
-          "~25 min. Similar incidents in our history cleared within 18-32 min.",
+          "Clears when your rate/quota window resets — check your provider quota dashboard.",
         recommendedAlternative:
-          "Route to Claude (health 98, ~0.8s latency) for the next ~30 min.",
+          "Route to Claude flagship (health 98, ~0.8s latency) while your quota resets.",
         insight:
-          "Gemini's response latency tripled and one QA probe failed, while Claude and GPT are nominal. This is consistent with a provider-side capacity issue, not a problem on your end. Failover recommended.",
+          "Gemini flagship is rate-limited (HTTP 429): your account hit a request-rate or quota limit. This is your account's problem, NOT a Gemini service outage.",
+        communityConfirmed: false,
         createdAt: new Date().toISOString(),
       },
     ],
     updatedAt: new Date().toISOString(),
+    community: [
+      {
+        providerId: "Claude",
+        subreddit: "ClaudeAI",
+        status: "normal",
+        complaintRate: 0.08,
+        baseline: 0.07,
+        postCount: 25,
+        matchedPosts: 2,
+        sampledAt: new Date().toISOString(),
+      },
+      {
+        providerId: "GPT",
+        subreddit: "OpenAI",
+        status: "elevated",
+        complaintRate: 0.2,
+        baseline: 0.1,
+        postCount: 25,
+        matchedPosts: 5,
+        sampledAt: new Date().toISOString(),
+      },
+      {
+        // Coherent with the rate-limit above: a quota cap on YOUR key never
+        // shows up as community chatter, so Gemini reads calm here.
+        providerId: "Gemini",
+        subreddit: "Bard",
+        status: "normal",
+        complaintRate: 0.08,
+        baseline: 0.09,
+        postCount: 25,
+        matchedPosts: 2,
+        sampledAt: new Date().toISOString(),
+      },
+    ],
   };
 }

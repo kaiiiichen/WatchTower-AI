@@ -9,8 +9,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app import config
-from app.models import HealthSnapshot
+from app import config, diagnostics
+from app.models import HealthSnapshot, LocalDiagnosis
 from app.probes import ProbeResult, ProbeState
 
 
@@ -148,3 +148,64 @@ class TestHealthEndpoint:
         # Should parse without error
         snap = HealthSnapshot(**resp.json())
         assert len(snap.providers) == 2
+
+
+def _build_diagnose_app(monkeypatch, *, degraded=False):
+    """App exposing /diagnose wired like main.py, with network fully stubbed."""
+    claude = next(p for p in diagnostics.PROVIDERS if p.name == "Claude")
+    monkeypatch.setattr(diagnostics, "PROVIDERS", [claude])
+    monkeypatch.setattr(claude, "key", lambda: "sk-test")
+    monkeypatch.setattr(diagnostics.socket, "getaddrinfo", lambda *a, **k: [("x",)])
+
+    class FakeWriter:
+        def close(self): pass
+        async def wait_closed(self): pass
+
+    async def fake_open(host, port):
+        return (object(), FakeWriter())
+    monkeypatch.setattr(diagnostics.asyncio, "open_connection", fake_open)
+
+    def handler(req):
+        return httpx.Response(200, json={"data": []})
+
+    @asynccontextmanager
+    async def noop_lifespan(app):
+        yield
+
+    test_app = FastAPI(title="test", lifespan=noop_lifespan)
+    targets = _make_targets()
+    state = ProbeState(targets)
+    if degraded:
+        state.apply(targets[0], ProbeResult(False, 0, False, 0, http_status=500))  # down
+    test_app.state.probe_state = state
+    test_app.state.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    @test_app.get("/diagnose", response_model=LocalDiagnosis)
+    async def diagnose_route() -> LocalDiagnosis:
+        anomalies = [
+            p["name"] for p in test_app.state.probe_state.snapshot()["providers"]
+            if p["status"] in ("down", "degraded")
+        ]
+        return LocalDiagnosis(**await diagnostics.diagnose(test_app.state.client, anomalies))
+
+    return test_app
+
+
+class TestDiagnoseEndpoint:
+    def test_all_clear_when_local_green_and_no_anomaly(self, monkeypatch):
+        app = _build_diagnose_app(monkeypatch, degraded=False)
+        with TestClient(app, raise_server_exceptions=True) as client:
+            resp = client.get("/diagnose")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["verdictKind"] == "all-clear"
+        assert data["localHealthy"] is True
+        assert {c["check"] for c in data["checks"]} == {"dns", "tcp", "key"}
+
+    def test_service_side_when_local_green_and_probe_down(self, monkeypatch):
+        app = _build_diagnose_app(monkeypatch, degraded=True)
+        with TestClient(app, raise_server_exceptions=True) as client:
+            resp = client.get("/diagnose")
+        data = resp.json()
+        assert data["verdictKind"] == "service-side"
+        assert "not yours" in data["verdict"]

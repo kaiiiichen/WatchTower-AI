@@ -20,6 +20,7 @@ import httpx
 import sentry_sdk
 
 from . import config, monitoring
+from .redaction import redact
 
 log = logging.getLogger("watchtower.probes")
 
@@ -185,7 +186,7 @@ async def _do_probe(
     """Shared probe skeleton: POST, check status, delegate parsing."""
     r = await client.post(**request_kwargs)
     if r.status_code != 200:
-        log.warning("probe HTTP %s: %s", r.status_code, r.text[:200])
+        log.warning("probe HTTP %s: %s", r.status_code, redact(r.text[:200]))
         return None, None, r.status_code
     try:
         data = r.json()
@@ -378,25 +379,39 @@ async def _run_one(client: httpx.AsyncClient, target: dict) -> ProbeResult | Non
     except httpx.TimeoutException as exc:
         latency_ms = round((loop.time() - start) * 1000)
         log.warning("probe %s timed out after %dms", target["id"], latency_ms)
-        return ProbeResult(False, latency_ms, False, 0, None, f"TimeoutException: {exc}")
+        # exc can embed the request URL (with Gemini's ?key=) — redact before storing.
+        return ProbeResult(False, latency_ms, False, 0, None, redact(f"TimeoutException: {exc}"))
     except httpx.ConnectError as exc:
         latency_ms = round((loop.time() - start) * 1000)
-        log.warning("probe %s connection failed: %s", target["id"], exc)
-        return ProbeResult(False, latency_ms, False, 0, None, f"ConnectError: {exc}")
+        log.warning("probe %s connection failed: %s", target["id"], redact(str(exc)))
+        return ProbeResult(False, latency_ms, False, 0, None, redact(f"ConnectError: {exc}"))
     except Exception as exc:
         latency_ms = round((loop.time() - start) * 1000)
-        log.error("probe %s unexpected error: %s: %s", target["id"], type(exc).__name__, exc)
+        log.error("probe %s unexpected error: %s: %s", target["id"], type(exc).__name__, redact(str(exc)))
         return ProbeResult(False, latency_ms, False, 0, None, "probe_error")
 
 
 # --- Scoring ---------------------------------------------------------------
 
 
+def _classify_failure(r: ProbeResult) -> str:
+    """Map a non-200 / errored probe to a status that separates the user's own
+    problem from a real service outage. "down" is reserved for genuine service
+    faults so a quota cap or a bad model name never masquerades as an outage."""
+    code = r.http_status
+    if code == 429:
+        return "rate_limited"  # your account: rate/quota limit
+    if code is not None and 400 <= code < 500:
+        return "misconfigured"  # your config: model/key unavailable (400/403/404)
+    # 5xx, or no HTTP response at all (timeout/connect/unknown error) -> outage.
+    return "down"
+
+
 def _score_and_status(r: ProbeResult | None) -> tuple[int, str]:
     if r is None:
         return 0, "unknown"
     if not r.available:
-        return 0, "down"
+        return 0, _classify_failure(r)
     score = 100.0
     if not r.qa_correct:
         score -= 35.0
@@ -440,6 +455,9 @@ class ProbeState:
 
     def __init__(self, targets: list[dict]) -> None:
         self._targets = targets
+        # Optional Reddit corroboration source (CommunityState). Stays None in
+        # tests / when unset, so the snapshot + alerts behave exactly as before.
+        self.community = None
         self._history: dict[str, deque] = {t["id"]: deque(maxlen=config.HISTORY_LEN) for t in targets}
         self._latest: dict[str, dict] = {}
         for t in targets:
@@ -465,52 +483,49 @@ class ProbeState:
 
     def snapshot(self) -> dict:
         providers = [self._latest[t["id"]] for t in self._targets]
+        community = self.community.by_provider() if self.community else None
         return {
             "providers": providers,
-            "alerts": _build_alerts(providers),
+            "alerts": _build_alerts(providers, community),
             "updatedAt": self.updated_at,
+            "community": self.community.signals() if self.community else [],
         }
 
 
-def _build_alerts(providers: list[dict]) -> list[dict]:
+def _build_alerts(providers: list[dict], community: dict | None = None) -> list[dict]:
     """Per-MODEL rule-based alerts. Two tiers of the same provider are compared
     so we can tell a model-specific problem (one tier impaired, the other fine)
     apart from a provider-wide outage, and prefer same-provider failover.
+
+    `community` maps provider name -> latest Reddit signal dict (or None). When a
+    probe anomaly coincides with a community-signal spike, the alert is upgraded
+    to a confirmed widespread event. It's purely additive corroboration — absent
+    or unavailable community data changes nothing.
     Full 'Agent' chain is a later module."""
+    community = community or {}
     healthy = [p for p in providers if p["status"] == "operational"]
     best_global = max(healthy, key=lambda p: p["healthScore"], default=None)
     alerts: list[dict] = []
 
+    # Genuine service faults (the service's problem) vs account/config faults
+    # (your problem). The whole point of the product: don't conflate the two.
+    SERVICE_FAULTS = ("degraded", "down")
+    CONFIG_FAULTS = ("rate_limited", "misconfigured")
+
     for p in providers:
-        if p["status"] not in ("degraded", "down"):
+        status = p["status"]
+        if status not in SERVICE_FAULTS + CONFIG_FAULTS:
             continue
         label = f"{p['name']} {p.get('tier', '')}".strip()
+        model = p.get("model", "?")
         # Siblings = the same provider's other tier(s).
         siblings = [q for q in providers if q["name"] == p["name"] and q["id"] != p["id"]]
         healthy_siblings = [q for q in siblings if q["status"] == "operational"]
         best_sibling = max(healthy_siblings, key=lambda q: q["healthScore"], default=None)
 
-        # Attribution scope: model-specific vs provider-wide vs cloud-side.
-        if best_sibling:
-            attribution = (
-                f"Model-specific: {label} ({p.get('model')}) is impaired, but the same "
-                f"provider's {best_sibling.get('tier')} model ({best_sibling.get('model')}, "
-                f"health {best_sibling['healthScore']}) is healthy — looks like a per-model "
-                f"issue, not a {p['name']}-wide outage."
-            )
-        elif siblings:  # has other tiers, none healthy
-            others = ", ".join(s.get("tier", "?") for s in siblings)
-            attribution = (
-                f"Provider-wide: every probed {p['name']} model is impaired "
-                f"({others} too) — likely a {p['name']} outage, not model-specific."
-            )
-        elif healthy:
-            attribution = "Cloud-side: other providers respond normally from the same probe."
-        else:
-            attribution = "Inconclusive: multiple providers affected — check your network."
-
         # Failover: prefer the same provider's healthy tier (cheaper switch),
-        # otherwise the healthiest model anywhere.
+        # otherwise the healthiest model anywhere. Useful for both fault classes
+        # (route elsewhere while a service recovers OR while you fix your config).
         alt_target = best_sibling or best_global
         if alt_target:
             same = alt_target["name"] == p["name"]
@@ -523,19 +538,91 @@ def _build_alerts(providers: list[dict]) -> list[dict]:
         else:
             alt = "No healthy alternative currently available."
 
+        community_confirmed = False
+
+        if status in CONFIG_FAULTS:
+            # Your problem, not the service's — so community chatter can't (and
+            # shouldn't) corroborate it, and this is never "down".
+            severity = "warning"
+            if status == "rate_limited":
+                title = f"{label} ({model}) is rate-limited"
+                attribution = (
+                    f"Your account: {label} returned HTTP 429 (rate/quota limit) for "
+                    f"{model} — an account-side limit on your key, not a {p['name']} outage."
+                )
+                insight = (
+                    f"{label} ({model}) is rate-limited (HTTP 429): your account hit a "
+                    f"request-rate or quota limit. This is your account's problem, NOT a "
+                    f"{p['name']} service outage."
+                )
+                recovery = "Clears when your rate/quota window resets — check your provider quota dashboard."
+            else:  # misconfigured
+                title = f"{label} ({model}) is misconfigured"
+                attribution = (
+                    f"Your config: {label} returned a 4xx for {model} — the model name may "
+                    f"be unavailable to your key, or the key lacks access/permission. "
+                    f"Not a {p['name']} outage."
+                )
+                insight = (
+                    f"{label} ({model}) is unavailable due to configuration (HTTP 4xx): the "
+                    f"model isn't available to your key, or a key/permission problem. This is "
+                    f"your configuration's problem, NOT a {p['name']} service outage."
+                )
+                recovery = "Won't self-recover — fix the model name or key/permissions in your config."
+        else:
+            # Service fault: attribute model-specific vs provider-wide vs cloud-side.
+            if best_sibling:
+                attribution = (
+                    f"Model-specific: {label} ({model}) is impaired, but the same "
+                    f"provider's {best_sibling.get('tier')} model ({best_sibling.get('model')}, "
+                    f"health {best_sibling['healthScore']}) is healthy — looks like a per-model "
+                    f"issue, not a {p['name']}-wide outage."
+                )
+            elif siblings:  # has other tiers, none healthy
+                others = ", ".join(s.get("tier", "?") for s in siblings)
+                attribution = (
+                    f"Provider-wide: every probed {p['name']} model is impaired "
+                    f"({others} too) — likely a {p['name']} outage, not model-specific."
+                )
+            elif healthy:
+                attribution = "Cloud-side: other providers respond normally from the same probe."
+            else:
+                attribution = "Inconclusive: multiple providers affected — check your network."
+
+            severity = "critical" if status == "down" else "warning"
+            title = f"{label} ({model}) is {status}"
+            recovery = "Unknown (history-based estimate pending)."
+            insight = (
+                f"{label} ({model}) health is {p['healthScore']}/100 "
+                f"(latency {p['latencyMs']}ms, QA {'pass' if p['qaCorrect'] else 'fail'})."
+            )
+
+            # Community corroboration: a SERVICE anomaly + a Reddit complaint spike
+            # for the same provider => confirmed widespread event, not yet officially
+            # acknowledged. Corroboration only — never the basis for the alert itself.
+            sig = community.get(p["name"])
+            community_confirmed = bool(sig and sig.get("status") == "spike")
+            if community_confirmed:
+                sub = sig.get("subreddit")
+                insight += (
+                    f" CONFIRMED WIDESPREAD EVENT — community signal is spiking on "
+                    f"r/{sub} (complaint rate {sig.get('complaintRate')} vs baseline "
+                    f"{sig.get('baseline')} over {sig.get('postCount')} posts). Probe "
+                    f"anomaly + community spike corroborate each other; this looks like "
+                    f"a real outage the provider has not acknowledged on its status page yet."
+                )
+
         alerts.append(
             {
-                "id": f"alert-{p['id']}-{p['status']}",
-                "severity": "critical" if p["status"] == "down" else "warning",
+                "id": f"alert-{p['id']}-{status}",
+                "severity": severity,
                 "providerId": p["id"],
-                "title": f"{label} ({p.get('model', '?')}) is {p['status']}",
+                "title": title,
                 "attribution": attribution,
-                "recoveryEta": "Unknown (history-based estimate pending).",
+                "recoveryEta": recovery,
                 "recommendedAlternative": alt,
-                "insight": (
-                    f"{label} ({p.get('model', '?')}) health is {p['healthScore']}/100 "
-                    f"(latency {p['latencyMs']}ms, QA {'pass' if p['qaCorrect'] else 'fail'})."
-                ),
+                "insight": insight,
+                "communityConfirmed": community_confirmed,
                 "createdAt": _now_iso(),
             }
         )

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import type { HealthSnapshot } from "@/lib/types";
 import ProviderCard from "@/components/ProviderCard";
 import AlertBanner from "@/components/AlertBanner";
+import CommunitySignals from "@/components/CommunitySignals";
+import LocalDiagnostics from "@/components/LocalDiagnostics";
 
 const POLL_MS = 30_000;
 
@@ -81,6 +83,12 @@ export default function Dashboard() {
                 />
               ))}
         </section>
+
+        <LocalDiagnostics />
+
+        {snap?.community?.length ? (
+          <CommunitySignals signals={snap.community} />
+        ) : null}
 
         <footer className="mt-10 text-center text-xs text-white/30">
           Polling every {POLL_MS / 1000}s
