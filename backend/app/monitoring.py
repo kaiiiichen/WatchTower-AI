@@ -14,8 +14,21 @@ import logging
 import sentry_sdk
 
 from . import config
+from .redaction import scrub
 
 log = logging.getLogger("watchtower.monitoring")
+
+
+def _before_send(event, _hint):
+    """Redact `key=...` query values from every string in an outgoing event.
+    Covers error events: breadcrumbs, request.url, exception messages, etc."""
+    return scrub(event)
+
+
+def _before_send_transaction(event, _hint):
+    """Same redaction for performance transactions — the httpx integration puts
+    the probed URL (with Gemini's `?key=`) in span descriptions and data."""
+    return scrub(event)
 
 # Provider status -> Sentry event level.
 _LEVEL = {"degraded": "warning", "down": "error"}
@@ -33,6 +46,9 @@ def init_sentry() -> bool:
         dsn=config.SENTRY_DSN,
         environment=config.SENTRY_ENVIRONMENT,
         traces_sample_rate=config.SENTRY_TRACES_SAMPLE_RATE,
+        # Strip Gemini's `?key=...` from URLs before anything leaves the process.
+        before_send=_before_send,
+        before_send_transaction=_before_send_transaction,
     )
     log.info("Sentry initialised (environment=%s)", config.SENTRY_ENVIRONMENT)
     return True

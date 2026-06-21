@@ -4,7 +4,13 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-ProviderStatus = Literal["operational", "degraded", "down", "unknown"]
+# "down" is reserved for genuine SERVICE faults (5xx / timeout). Account/config
+# faults are split out so the product can answer "your problem vs the service's":
+#   rate_limited  -> 429: your account hit a rate/quota limit
+#   misconfigured -> other 4xx: model unavailable to your key, or key/permission
+ProviderStatus = Literal[
+    "operational", "degraded", "down", "unknown", "rate_limited", "misconfigured"
+]
 ProviderTier = Literal["flagship", "mid"]
 AlertSeverity = Literal["info", "warning", "critical"]
 
@@ -37,6 +43,53 @@ class Alert(BaseModel):
     recommendedAlternative: str
     insight: str
     createdAt: str
+    # True when a community-signal spike corroborates this probe anomaly,
+    # upgrading the alert to a "confirmed widespread event".
+    communityConfirmed: bool = False
+
+
+# Reddit community-signal heat for a provider. "unavailable" = the source
+# couldn't be reached this cycle — corroboration only, never blocks detection.
+CommunitySignalStatus = Literal["normal", "elevated", "spike", "unavailable"]
+
+
+class CommunitySignal(BaseModel):
+    providerId: str  # provider name this signal corroborates (e.g. "Claude")
+    subreddit: str | None = None
+    status: CommunitySignalStatus
+    complaintRate: float  # matched / total posts this cycle (0.0 when unavailable)
+    baseline: float  # rolling mean complaint rate
+    postCount: int
+    matchedPosts: int
+    sampledAt: str | None = None
+
+
+# --- Local environment diagnostics ----------------------------------------
+DiagnosticStatus = Literal["pass", "fail", "unknown"]
+# your-side:    a local check failed (DNS/TCP/key) — your environment.
+# account-side: local clean, but a provider is rate_limited/misconfigured —
+#               your account layer (quota/config), not a service outage.
+# service-side: local clean, but a provider is down/degraded — the provider's fault.
+# all-clear:    local clean AND every provider operational.
+# indeterminate: couldn't determine.
+VerdictKind = Literal[
+    "your-side", "account-side", "service-side", "all-clear", "indeterminate"
+]
+
+
+class DiagnosticCheck(BaseModel):
+    provider: str
+    check: str  # "dns" | "tcp" | "key"
+    status: DiagnosticStatus
+    detail: str
+
+
+class LocalDiagnosis(BaseModel):
+    checks: list[DiagnosticCheck]
+    localHealthy: bool | None  # True=all pass, False=a fail, None=inconclusive
+    verdictKind: VerdictKind
+    verdict: str  # the headline attribution sentence
+    checkedAt: str
 
 
 DataSource = Literal["live", "mock"]
@@ -47,3 +100,4 @@ class HealthSnapshot(BaseModel):
     alerts: list[Alert]
     updatedAt: str
     source: DataSource | None = None
+    community: list[CommunitySignal] = []

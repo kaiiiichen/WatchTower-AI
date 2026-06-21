@@ -12,6 +12,7 @@ from app.probes import (
     ProbeResult,
     ProbeState,
     _build_alerts,
+    _classify_failure,
     _qa_ok,
     _run_one,
     _score_and_status,
@@ -159,6 +160,50 @@ class TestScoreAndStatus:
         r = ProbeResult(available=True, latency_ms=50_000, qa_correct=False, token_rate=0, http_status=200)
         score, status = _score_and_status(r)
         assert score >= 0
+
+
+# ---------------------------------------------------------------------------
+# _classify_failure — separate "your problem" from "service down"
+# ---------------------------------------------------------------------------
+
+def _fail(http_status):
+    return ProbeResult(available=False, latency_ms=0, qa_correct=False,
+                       token_rate=0, http_status=http_status)
+
+
+class TestClassifyFailure:
+    def test_429_is_rate_limited(self):
+        assert _classify_failure(_fail(429)) == "rate_limited"
+
+    def test_400_is_misconfigured(self):
+        assert _classify_failure(_fail(400)) == "misconfigured"
+
+    def test_403_is_misconfigured(self):
+        assert _classify_failure(_fail(403)) == "misconfigured"
+
+    def test_404_is_misconfigured(self):
+        assert _classify_failure(_fail(404)) == "misconfigured"
+
+    def test_500_is_down(self):
+        assert _classify_failure(_fail(500)) == "down"
+
+    def test_503_is_down(self):
+        assert _classify_failure(_fail(503)) == "down"
+
+    def test_no_http_status_is_down(self):
+        # Timeout / connect error => no HTTP response => real outage.
+        assert _classify_failure(_fail(None)) == "down"
+
+
+class TestScoreStatusByFailure:
+    def test_429_scores_rate_limited(self):
+        assert _score_and_status(_fail(429)) == (0, "rate_limited")
+
+    def test_404_scores_misconfigured(self):
+        assert _score_and_status(_fail(404)) == (0, "misconfigured")
+
+    def test_500_scores_down(self):
+        assert _score_and_status(_fail(500)) == (0, "down")
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +363,45 @@ class TestBuildAlerts:
         ]
         alerts = _build_alerts(providers)
         assert alerts == []
+
+    def _gemini(self, status):
+        return [
+            {"id": "claude", "name": "Claude", "status": "operational",
+             "healthScore": 98, "latencyMs": 400, "qaCorrect": True, "tier": "flagship", "model": "m"},
+            {"id": "gemini-flagship", "name": "Gemini", "status": status,
+             "healthScore": 0, "latencyMs": 0, "qaCorrect": False,
+             "tier": "flagship", "model": "gemini-3.1-pro-preview"},
+        ]
+
+    def test_rate_limited_is_not_critical_and_blames_account(self):
+        a = _build_alerts(self._gemini("rate_limited"))[0]
+        assert a["severity"] == "warning"  # NOT critical — not an outage
+        assert "rate-limited" in a["title"]
+        assert "429" in a["attribution"]
+        assert "your account" in a["insight"].lower()
+        assert "not a gemini service outage" in a["insight"].lower()
+
+    def test_misconfigured_blames_config_not_service(self):
+        a = _build_alerts(self._gemini("misconfigured"))[0]
+        assert a["severity"] == "warning"
+        assert "misconfigured" in a["title"]
+        assert "your config" in a["attribution"].lower()
+        assert "not a gemini service outage" in a["insight"].lower()
+
+    def test_config_faults_still_recommend_alternative(self):
+        # Routing elsewhere is useful while you fix your key/quota.
+        a = _build_alerts(self._gemini("rate_limited"))[0]
+        assert "Claude" in a["recommendedAlternative"]
+
+    def test_community_spike_never_confirms_config_fault(self):
+        # A Reddit spike must NOT upgrade an account/config problem — Reddit
+        # chatter can't corroborate YOUR quota running out.
+        community = {"Gemini": {"status": "spike", "subreddit": "Bard",
+                                "complaintRate": 0.5, "baseline": 0.05, "postCount": 25}}
+        for status in ("rate_limited", "misconfigured"):
+            a = _build_alerts(self._gemini(status), community)[0]
+            assert a["communityConfirmed"] is False
+            assert "CONFIRMED WIDESPREAD" not in a["insight"]
 
 
 # ---------------------------------------------------------------------------

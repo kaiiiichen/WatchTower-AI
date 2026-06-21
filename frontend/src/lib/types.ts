@@ -2,8 +2,18 @@
 // These mirror what the FastAPI backend will eventually return, so swapping
 // the mock route for the real backend is a no-op on the frontend.
 
+// "down" is reserved for genuine SERVICE outages (5xx / timeout). Account/config
+// faults are split out so the UI answers "your problem vs the service's":
+//   "rate_limited"  — 429: your account hit a rate/quota limit
+//   "misconfigured" — other 4xx: model unavailable to your key, or key/permission
 // "unknown" = provider not probed (e.g. API key missing) — never a crash.
-export type ProviderStatus = "operational" | "degraded" | "down" | "unknown";
+export type ProviderStatus =
+  | "operational"
+  | "degraded"
+  | "down"
+  | "unknown"
+  | "rate_limited"
+  | "misconfigured";
 
 // Probed tier: "flagship" (strongest model) vs "mid" (mid model).
 export type ProviderTier = "flagship" | "mid";
@@ -34,6 +44,28 @@ export interface Alert {
   recommendedAlternative: string; // 3. healthiest alternative
   insight: string; // 4. LLM plain-language insight
   createdAt: string;
+  // True when a Reddit community-signal spike corroborates the probe anomaly,
+  // upgrading the alert to a "confirmed widespread event".
+  communityConfirmed?: boolean;
+}
+
+// Reddit community-signal heat for a provider. "unavailable" = source couldn't
+// be reached this cycle — corroboration only, never blocks core detection.
+export type CommunitySignalStatus =
+  | "normal"
+  | "elevated"
+  | "spike"
+  | "unavailable";
+
+export interface CommunitySignal {
+  providerId: string; // provider name this corroborates (e.g. "Claude")
+  subreddit?: string | null;
+  status: CommunitySignalStatus;
+  complaintRate: number; // matched / total posts this cycle
+  baseline: number; // rolling mean complaint rate
+  postCount: number;
+  matchedPosts: number;
+  sampledAt?: string | null;
 }
 
 export type DataSource = "live" | "mock";
@@ -43,4 +75,30 @@ export interface HealthSnapshot {
   alerts: Alert[];
   updatedAt: string;
   source: DataSource;
+  community?: CommunitySignal[];
+}
+
+// --- Local environment diagnostics ----------------------------------------
+// Answers the product's core question: is the problem yours or the service's?
+export type DiagnosticStatus = "pass" | "fail" | "unknown";
+export type VerdictKind =
+  | "your-side" // a local check failed — your environment
+  | "account-side" // local clean, provider rate_limited/misconfigured — your account layer
+  | "service-side" // local clean, a provider is down/degraded — the provider's fault
+  | "all-clear" // local clean AND every provider operational
+  | "indeterminate"; // couldn't determine
+
+export interface DiagnosticCheck {
+  provider: string;
+  check: string; // "dns" | "tcp" | "key"
+  status: DiagnosticStatus;
+  detail: string;
+}
+
+export interface LocalDiagnosis {
+  checks: DiagnosticCheck[];
+  localHealthy: boolean | null;
+  verdictKind: VerdictKind;
+  verdict: string; // the headline attribution sentence
+  checkedAt: string;
 }
