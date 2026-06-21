@@ -1,4 +1,4 @@
-"""Sentry integration for Watchtower.
+"""Sentry integration for WatchTower AI.
 
 - init_sentry(): initialise the SDK (no-op without SENTRY_DSN).
 - report_incidents(): for each degraded/down provider, send a Sentry event

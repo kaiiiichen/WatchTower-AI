@@ -117,7 +117,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Watchtower AI — Probe Engine",
+    title="WatchTower AI — Probe Engine",
     lifespan=lifespan,
     docs_url="/docs" if config.ENABLE_DOCS else None,
     redoc_url="/redoc" if config.ENABLE_DOCS else None,

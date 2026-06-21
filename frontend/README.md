@@ -1,36 +1,68 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# WatchTower AI — Frontend
 
-## Getting Started
+Next.js 16 dashboard for WatchTower AI. Polls the probe engine every 30 seconds and renders provider health, alerts, local diagnostics, community signals, and the VU dataset backtest ("Detection Gap").
 
-First, run the development server:
+## Prerequisites
+
+- Node.js 20+
+- Running backend (optional) — see [backend/README.md](../backend/README.md)
+
+## Setup
 
 ```bash
+npm install
+cp .env.local.example .env.local   # or create manually
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Create `frontend/.env.local`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+BACKEND_URL=http://localhost:8000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Learn More
+Without `BACKEND_URL`, `/api/health` serves mock data from `src/lib/mock-data.ts` so the UI works standalone.
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Development server (default port 3000) |
+| `npm run build` | Production build |
+| `npm run start` | Serve production build |
+| `npm run lint` | ESLint |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## API proxy routes
 
-## Deploy on Vercel
+These server routes forward to the FastAPI backend when `BACKEND_URL` is set:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Route | Backend |
+|-------|---------|
+| `GET /api/health` | `GET /health` |
+| `GET /api/diagnose` | `GET /diagnose` |
+| `GET /api/backtest` | `GET /backtest` |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+On backend failure, health/backtest routes fall back to mock data and set `x-watchtower-fallback` response headers.
+
+## Key files
+
+| Path | Purpose |
+|------|---------|
+| `src/app/page.tsx` | Main dashboard |
+| `src/lib/types.ts` | Shared types (mirrors backend JSON) |
+| `src/components/ProviderCard.tsx` | Per-tier health card + latency sparkline |
+| `src/components/AlertBanner.tsx` | Attribution, failover, community confirmation |
+| `src/components/LocalDiagnostics.tsx` | Environment checks + verdict |
+| `src/components/CommunitySignals.tsx` | Reddit corroboration heat |
+| `src/components/DetectionGap.tsx` | VU dataset backtest charts |
+
+## Stack
+
+- Next.js 16 (App Router)
+- React 19
+- Tailwind CSS 4
+- TypeScript
+
+See the [root README](../README.md) for architecture, configuration, and deployment.

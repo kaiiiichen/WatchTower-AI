@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Watchtower AI",
+  title: "WatchTower AI",
   description: "Flight radar for AI services — detect Claude / GPT / Gemini outages before the official status page does.",
 };
 

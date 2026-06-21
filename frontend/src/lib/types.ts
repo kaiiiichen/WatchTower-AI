@@ -1,4 +1,4 @@
-// Shared shapes for Watchtower AI dashboard.
+// Shared shapes for WatchTower AI dashboard.
 // These mirror what the FastAPI backend will eventually return, so swapping
 // the mock route for the real backend is a no-op on the frontend.
 

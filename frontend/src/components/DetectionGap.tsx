@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { BacktestReport, CaseTimeline, HistogramBin } from "@/lib/types";
 
-// "Why Watchtower" — the Detection Gap. Argues from REAL VU-dataset numbers that
+// "Why WatchTower" — the Detection Gap. Argues from REAL VU-dataset numbers that
 // official status pages lag/skip real-time acknowledgment, leaving a window that
 // high-frequency probing fills. Every figure comes from the backend computation;
 // the one estimated quantity (impact-window start) is explicitly flagged.
@@ -85,10 +85,10 @@ export default function DetectionGap() {
       {/* CONCLUSION — honest bridge, no overclaim */}
       <div className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
         <p className="text-sm leading-relaxed text-white/80">
-          <span className="font-semibold text-emerald-300">The window Watchtower fills: </span>
+          <span className="font-semibold text-emerald-300">The window WatchTower fills: </span>
           official pages skip real-time acknowledgment {fmt(cov.pct)}% of the time and,
           when they do post, take a median of {fmt(allRes?.medianMin ?? 0)} min to
-          resolve. Watchtower probes every 30s with a QA quality check, so it can
+          resolve. WatchTower probes every 30s with a QA quality check, so it can
           surface anomalies <em>inside</em> this acknowledgment window.
         </p>
         <p className="mt-2 text-xs text-white/40">
@@ -111,7 +111,7 @@ function Header() {
   return (
     <div>
       <h2 className="text-sm font-semibold uppercase tracking-widest text-white/50">
-        Why Watchtower · Detection Gap
+        Why WatchTower · Detection Gap
       </h2>
       <p className="mt-1 text-xs text-white/40">
         Official status pages confirm late — and sometimes not at all. Backtested on

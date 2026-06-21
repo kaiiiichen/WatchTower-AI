@@ -1,4 +1,4 @@
-# Watchtower AI — Backend (FastAPI Probe Engine)
+# WatchTower AI — Backend (FastAPI Probe Engine)
 
 Concurrently probes Claude / GPT / Gemini every `PROBE_INTERVAL` seconds
 (`asyncio.gather`), scores their health, and serves a snapshot at `GET /health`
