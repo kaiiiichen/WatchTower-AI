@@ -490,17 +490,30 @@ def _build_provider_health(
 class ProbeState:
     """Latest health per target id + a rolling latency history."""
 
-    def __init__(self, targets: list[dict]) -> None:
+    def __init__(
+        self,
+        targets: list[dict],
+        *,
+        history_store=None,
+        initial_history: dict[str, list[dict]] | None = None,
+    ) -> None:
         self._targets = targets
+        self._history_store = history_store
         # Optional Reddit corroboration source (CommunityState). Stays None in
         # tests / when unset, so the snapshot + alerts behave exactly as before.
         self.community = None
-        self._history: dict[str, deque] = {t["id"]: deque(maxlen=config.HISTORY_LEN) for t in targets}
+        self._history: dict[str, deque] = {t["id"]: deque(maxlen=config.HISTORY_LEN)for t in targets}
+        if initial_history:
+            for tid, points in initial_history.items():
+                if tid in self._history:
+                    for pt in points:
+                        self._history[tid].append(pt)
         self._latest: dict[str, dict] = {}
         for t in targets:
             self._latest[t["id"]] = _build_provider_health(
                 target=t, status="unknown", score=0, latency=0,
-                token_rate=0, qa_correct=False, history=[],
+                token_rate=0, qa_correct=False,
+                history=list(self._history[t["id"]]),
             )
         self.updated_at = _now_iso()
 
@@ -508,8 +521,10 @@ class ProbeState:
         tid = target["id"]
         score, status = _score_and_status(result)
         latency = result.latency_ms if result else 0
+        ts: str | None = None
         if result is not None:
-            self._history[tid].append({"t": _now_iso(), "ms": latency})
+            ts = _now_iso()
+            self._history[tid].append({"t": ts, "ms": latency})
         # Trend warning: a provider that is still healthy NOW but whose latency is
         # steadily climbing is flagged "degrading" — a pre-emptive heads-up. Only
         # overrides "operational"; an already-impaired status (degraded/down/...)
@@ -518,6 +533,16 @@ class ProbeState:
             trend = latency_trend([pt["ms"] for pt in self._history[tid]])
             if trend and trend["degrading"]:
                 status = "degrading"
+        if result is not None and self._history_store is not None and ts is not None:
+            self._history_store.record(
+                target=target,
+                timestamp=ts,
+                status=status,
+                health_score=score,
+                latency_ms=latency,
+                token_rate=result.token_rate,
+                qa_pass=result.qa_correct,
+            )
         self._latest[tid] = _build_provider_health(
             target=target, status=status, score=score, latency=latency,
             token_rate=result.token_rate if result else 0,
