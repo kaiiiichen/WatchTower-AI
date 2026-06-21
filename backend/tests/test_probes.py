@@ -382,7 +382,9 @@ class TestRunOne:
         assert result is not None
         assert result.available is False
         assert result.error is not None
-        assert "ConnectionError" in result.error
+        # An unexpected (non-httpx) exception is caught and sanitized to a
+        # generic code — internal exception detail must not leak into `error`.
+        assert result.error == "probe_error"
 
 
 # ---------------------------------------------------------------------------
