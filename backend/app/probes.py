@@ -453,17 +453,29 @@ def _build_provider_health(
 class ProbeState:
     """Latest health per target id + a rolling latency history."""
 
-    def __init__(self, targets: list[dict]) -> None:
+    def __init__(
+        self,
+        targets: list[dict],
+        *,
+        history_store=None,
+        initial_history: dict[str, list[dict]] | None = None,
+    ) -> None:
         self._targets = targets
+        self._history_store = history_store
         # Optional Reddit corroboration source (CommunityState). Stays None in
         # tests / when unset, so the snapshot + alerts behave exactly as before.
         self.community = None
         self._history: dict[str, deque] = {t["id"]: deque(maxlen=config.HISTORY_LEN) for t in targets}
+        if initial_history:
+            for tid, points in initial_history.items():
+                if tid in self._history:
+                    for pt in points:
+                        self._history[tid].append(pt)
         self._latest: dict[str, dict] = {}
         for t in targets:
             self._latest[t["id"]] = _build_provider_health(
                 target=t, status="unknown", score=0, latency=0,
-                token_rate=0, qa_correct=False, history=[],
+                token_rate=0, qa_correct=False, history=list(self._history[t["id"]]),
             )
         self.updated_at = _now_iso()
 
@@ -471,8 +483,19 @@ class ProbeState:
         tid = target["id"]
         score, status = _score_and_status(result)
         latency = result.latency_ms if result else 0
+        ts = _now_iso()
         if result is not None:
-            self._history[tid].append({"t": _now_iso(), "ms": latency})
+            self._history[tid].append({"t": ts, "ms": latency})
+            if self._history_store is not None:
+                self._history_store.record(
+                    target=target,
+                    timestamp=ts,
+                    status=status,
+                    health_score=score,
+                    latency_ms=latency,
+                    token_rate=result.token_rate,
+                    qa_pass=result.qa_correct,
+                )
         self._latest[tid] = _build_provider_health(
             target=target, status=status, score=score, latency=latency,
             token_rate=result.token_rate if result else 0,
@@ -648,5 +671,7 @@ async def probe_all(client: httpx.AsyncClient, state: ProbeState, targets: list[
             state.apply(target, ProbeResult(False, 0, False, 0, None, str(result)))
         else:
             state.apply(target, result)
+    if state._history_store is not None:
+        state._history_store.cleanup_old()
     # Layers 1 + 2: report degraded/down providers to Sentry (no-op without init).
     monitoring.report_incidents(state.snapshot()["providers"], state.updated_at)

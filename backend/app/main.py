@@ -15,6 +15,7 @@ from .community import CommunityState
 from .models import BacktestReport, HealthSnapshot, LocalDiagnosis
 from .monitoring import init_sentry
 from .probes import ProbeState, build_targets, probe_all
+from .store import ProbeHistoryStore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("watchtower")
@@ -69,7 +70,19 @@ async def lifespan(app: FastAPI):
         log.exception("failed to build probe targets at startup")
         app.state.targets = []
     log.info("probe targets: %s", [(t["id"], t["model"]) for t in app.state.targets])
-    app.state.probe_state = ProbeState(app.state.targets)
+    history_store = ProbeHistoryStore()
+    history_store.init()
+    initial_history = history_store.load_history(app.state.targets)
+    if any(initial_history.values()):
+        log.info(
+            "restored probe history from sqlite: %s points",
+            sum(len(v) for v in initial_history.values()),
+        )
+    app.state.probe_state = ProbeState(
+        app.state.targets,
+        history_store=history_store,
+        initial_history=initial_history,
+    )
 
     # Community signals (Reddit) — corroboration source, attached to probe_state
     # so the snapshot can surface it. Built from the probed provider names; never
