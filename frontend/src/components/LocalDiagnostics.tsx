@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { LocalDiagnosis } from "@/lib/types";
+import type { EnvironmentProfile, LocalDiagnosis } from "@/lib/types";
 import { DIAGNOSTIC_ICONS, VERDICT_STYLES } from "@/lib/style-maps";
 
 // Local environment diagnostics — answers "is it your problem or the service's?".
@@ -51,6 +51,10 @@ export default function LocalDiagnostics() {
 
       {diag && (
         <>
+          {/* Environment profile — contextual network picture, informational
+              only (no pass/fail). Sits above the verdict and checks. */}
+          {diag.profile ? <EnvProfile profile={diag.profile} /> : null}
+
           {/* The verdict — the product's soul. Deliberately loud. */}
           <div
             className={`mt-5 rounded-xl border p-4 ${VERDICT_STYLES[diag.verdictKind].box}`}
@@ -93,5 +97,56 @@ export default function LocalDiagnostics() {
         </>
       )}
     </section>
+  );
+}
+
+// Contextual network picture: egress IP, DNS results, and network-layer RTT.
+// Informational — never a pass/fail. "Network RTT" is deliberately labelled as
+// distinct from the model response latency shown on the provider cards.
+function EnvProfile({ profile }: { profile: EnvironmentProfile }) {
+  return (
+    <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-white/50">
+          Environment profile
+        </h3>
+        <span className="text-[10px] text-white/30">context · not pass/fail</span>
+      </div>
+
+      <div className="mt-2 text-sm">
+        <span className="text-white/40">Network egress IP: </span>
+        <span className="font-mono text-white/90">{profile.egressIp ?? "unknown"}</span>
+      </div>
+
+      <table className="mt-3 w-full text-left text-xs">
+        <thead>
+          <tr className="text-white/40">
+            <th className="font-medium">Host</th>
+            <th className="font-medium">DNS → IP</th>
+            <th className="font-medium text-right">Network RTT</th>
+          </tr>
+        </thead>
+        <tbody className="align-top">
+          {profile.hosts.map((h) => (
+            <tr key={`${h.provider}-${h.host}`} className="border-t border-white/5">
+              <td className="py-1.5 pr-2">
+                <div className="text-white/80">{h.provider}</div>
+                <div className="font-mono text-[10px] text-white/30">{h.host}</div>
+              </td>
+              <td className="py-1.5 pr-2 font-mono text-white/60">
+                {h.resolvedIps?.length ? h.resolvedIps.join(", ") : "unknown"}
+              </td>
+              <td className="py-1.5 text-right font-mono tabular-nums text-white/80">
+                {h.tcpRttMs != null ? `${h.tcpRttMs}ms` : "unknown"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-[10px] text-white/30">
+        Network RTT = time to open a TCP connection — distinct from a card&apos;s
+        model response latency. Helps tell &ldquo;slow network&rdquo; from &ldquo;slow model&rdquo;.
+      </p>
+    </div>
   );
 }

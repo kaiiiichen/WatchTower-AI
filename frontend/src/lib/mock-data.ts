@@ -97,6 +97,14 @@ export function buildMockDiagnosis(): LocalDiagnosis {
     verdict:
       "Your environment is fine — but Gemini (quota/rate limit) is on your account layer (quota/config), NOT a service outage.",
     checkedAt: now,
+    profile: {
+      egressIp: "203.0.113.42",
+      hosts: [
+        { provider: "Claude", host: "api.anthropic.com", resolvedIps: ["160.79.104.10"], tcpRttMs: 38 },
+        { provider: "GPT", host: "api.openai.com", resolvedIps: ["104.18.6.192", "104.18.7.192"], tcpRttMs: 52 },
+        { provider: "Gemini", host: "generativelanguage.googleapis.com", resolvedIps: ["142.250.80.10"], tcpRttMs: null },
+      ],
+    },
   };
 }
 
