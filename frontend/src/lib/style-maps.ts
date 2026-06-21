@@ -8,6 +8,8 @@ import type {
 
 export const STATUS_STYLES = {
   operational: { label: "Operational", dot: "bg-emerald-400", text: "text-emerald-400", line: "#34d399" },
+  // Precursor trend warning — forward-looking, visually between green and amber.
+  degrading: { label: "⚠️ Trending down", dot: "bg-yellow-300", text: "text-yellow-300", line: "#fde047" },
   degraded: { label: "Degraded", dot: "bg-amber-400", text: "text-amber-400", line: "#fbbf24" },
   // Red is reserved for genuine service outages so it stays meaningful.
   down: { label: "Down", dot: "bg-rose-500", text: "text-rose-500", line: "#fb7185" },

@@ -7,3 +7,4 @@ __pycache__/
 .venv/
 *.pyc
 *.db
+!backend/data/vu_dataset/**/*.csv

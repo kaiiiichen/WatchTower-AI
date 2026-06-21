@@ -8,8 +8,12 @@ from pydantic import BaseModel
 # faults are split out so the product can answer "your problem vs the service's":
 #   rate_limited  -> 429: your account hit a rate/quota limit
 #   misconfigured -> other 4xx: model unavailable to your key, or key/permission
+# "degrading" = a precursor/trend warning: still healthy NOW, but latency is
+# steadily climbing (predicted to worsen). Distinct from "degraded" (already
+# impaired). See probes.latency_trend.
 ProviderStatus = Literal[
-    "operational", "degraded", "down", "unknown", "rate_limited", "misconfigured"
+    "operational", "degrading", "degraded", "down", "unknown",
+    "rate_limited", "misconfigured",
 ]
 ProviderTier = Literal["flagship", "mid"]
 AlertSeverity = Literal["info", "warning", "critical"]

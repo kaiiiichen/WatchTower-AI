@@ -6,9 +6,12 @@
 // faults are split out so the UI answers "your problem vs the service's":
 //   "rate_limited"  — 429: your account hit a rate/quota limit
 //   "misconfigured" — other 4xx: model unavailable to your key, or key/permission
-// "unknown" = provider not probed (e.g. API key missing) — never a crash.
+// "degrading" = a precursor trend warning: still healthy NOW, but latency is
+// steadily climbing (predicted to worsen). Distinct from "degraded" (already
+// impaired). "unknown" = provider not probed (e.g. API key missing).
 export type ProviderStatus =
   | "operational"
+  | "degrading"
   | "degraded"
   | "down"
   | "unknown"
