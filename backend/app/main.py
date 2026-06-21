@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
 from .models import HealthSnapshot
+from .monitoring import init_sentry
 from .probes import ProbeState, build_targets, probe_all
 
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +36,7 @@ async def _probe_loop(app: FastAPI) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_sentry()  # Layer 1: no-op when SENTRY_DSN is unset.
     app.state.client = httpx.AsyncClient(timeout=config.PROBE_TIMEOUT)
     app.state.probe_state = None
     try:

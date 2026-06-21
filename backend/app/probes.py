@@ -17,8 +17,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
+import sentry_sdk
 
-from . import config
+from . import config, monitoring
 
 log = logging.getLogger("watchtower.probes")
 
@@ -541,11 +542,24 @@ def _build_alerts(providers: list[dict]) -> list[dict]:
     return alerts
 
 
+async def _run_one_traced(client: httpx.AsyncClient, target: dict) -> ProbeResult | None:
+    """Layer 3: wrap each provider probe in a Sentry span (no-op without init)."""
+    # 2.x renamed span `description` -> `name` (same span label); spec said description.
+    with sentry_sdk.start_span(op="probe", name=f"probe_{target['id']}"):
+        return await _run_one(client, target)
+
+
 async def probe_all(client: httpx.AsyncClient, state: ProbeState, targets: list[dict]) -> None:
-    results = await asyncio.gather(*(_run_one(client, t) for t in targets), return_exceptions=True)
+    # Layer 3: one transaction per probe cycle, one span per provider probe.
+    with sentry_sdk.start_transaction(op="probe_cycle", name="AI Provider Probe Cycle"):
+        results = await asyncio.gather(
+            *(_run_one_traced(client, t) for t in targets), return_exceptions=True
+        )
     for target, result in zip(targets, results):
         if isinstance(result, BaseException):
             log.error("probe %s raised unexpectedly: %s", target["id"], result)
             state.apply(target, ProbeResult(False, 0, False, 0, None, str(result)))
         else:
             state.apply(target, result)
+    # Layers 1 + 2: report degraded/down providers to Sentry (no-op without init).
+    monitoring.report_incidents(state.snapshot()["providers"], state.updated_at)
