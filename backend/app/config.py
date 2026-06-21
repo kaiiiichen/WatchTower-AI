@@ -84,8 +84,8 @@ OPENAI_MODEL_MID = os.getenv("OPENAI_MODEL_MID", "gpt-4o-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
 GEMINI_MODEL_MID = os.getenv("GEMINI_MODEL_MID", "gemini-1.5-flash")
 
-# --- Community signals (Reddit) --------------------------------------------
-# Corroboration layer, NOT a dependency: if Reddit is unreachable the probe
+# --- Community signals (Reddit + HN) ---------------------------------------
+# Corroboration layer, NOT a dependency: if Reddit/HN is unreachable the probe
 # pipeline is unaffected and signals report "unavailable".
 #
 # Reddit's public JSON needs no auth but DOES require a unique User-Agent or it
@@ -93,8 +93,12 @@ GEMINI_MODEL_MID = os.getenv("GEMINI_MODEL_MID", "gemini-1.5-flash")
 REDDIT_USER_AGENT = os.getenv(
     "REDDIT_USER_AGENT", "python:watchtower-ai:v1.0 (by /u/watchtower_ai)"
 )
-# How often to poll Reddit (seconds). Kept well above Reddit's rate-limit floor.
+# How often to poll Reddit/HN (seconds). Kept well above rate-limit floors.
 COMMUNITY_INTERVAL = _env_int("COMMUNITY_INTERVAL", "60")
+# Hacker News Algolia search API base URL.
+HN_ALGOLIA_BASE = os.getenv("HN_ALGOLIA_BASE", "https://hn.algolia.com/api/v1")
+# How many hours back to search HN stories for outage signals.
+COMMUNITY_LOOKBACK_HOURS = _env_int("COMMUNITY_LOOKBACK_HOURS", "24")
 
 # --- Official status pages (Statuspage JSON) -------------------------------
 # Polls less often than probes — official pages update on minute-scale cadence.
