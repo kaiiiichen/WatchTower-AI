@@ -149,6 +149,87 @@ async def check_key(client: httpx.AsyncClient, prov: _DiagProvider) -> dict:
     return _check(prov.name, "key", status, detail)
 
 
+# --- Environment profile (informational, not pass/fail) --------------------
+
+
+def _ips_from_getaddrinfo(infos) -> list[str] | None:
+    """Pull unique IPs out of getaddrinfo output, tolerating odd shapes."""
+    ips = set()
+    for info in infos:
+        try:
+            ips.add(info[4][0])
+        except (IndexError, TypeError):
+            continue
+    return sorted(ips) or None
+
+
+async def resolve_ips(host: str) -> list[str] | None:
+    """The actual IP(s) a host resolves to. None on failure (shown as 'unknown')."""
+    loop = asyncio.get_event_loop()
+    try:
+        infos = await loop.run_in_executor(
+            None, lambda: socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+        )
+        return _ips_from_getaddrinfo(infos)
+    except Exception:
+        return None
+
+
+async def tcp_rtt_ms(host: str, port: int = 443) -> int | None:
+    """NETWORK round-trip to open a socket to host:443 — distinct from model
+    response latency. Helps answer 'is the network slow or is the model slow?'."""
+    loop = asyncio.get_event_loop()
+    writer = None
+    try:
+        start = loop.time()
+        fut = asyncio.open_connection(host, port)
+        _, writer = await asyncio.wait_for(fut, timeout=config.DIAGNOSTIC_TIMEOUT)
+        return round((loop.time() - start) * 1000)
+    except Exception:
+        return None
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+async def egress_ip(client: httpx.AsyncClient) -> str | None:
+    """This machine's public egress IP via a public echo service. None on failure."""
+    try:
+        r = await client.get(
+            "https://api.ipify.org", params={"format": "json"},
+            timeout=config.DIAGNOSTIC_TIMEOUT,
+        )
+        if r.status_code != 200:
+            return None
+        ip = r.json().get("ip")
+        return ip or None
+    except Exception:
+        return None
+
+
+async def _host_net_info(provider: str, host: str) -> dict:
+    ips, rtt = await asyncio.gather(resolve_ips(host), tcp_rtt_ms(host))
+    return {"provider": provider, "host": host, "resolvedIps": ips, "tcpRttMs": rtt}
+
+
+async def environment_profile(client: httpx.AsyncClient) -> dict:
+    """Contextual network picture (egress IP, DNS, network RTT). Informational
+    only — never participates in the pass/fail verdict, and never raises."""
+    try:
+        ip, hosts = await asyncio.gather(
+            egress_ip(client),
+            asyncio.gather(*(_host_net_info(p.name, p.host) for p in PROVIDERS)),
+        )
+        return {"egressIp": ip, "hosts": list(hosts)}
+    except Exception:  # belt-and-suspenders — profile must never break /diagnose
+        log.exception("environment profile failed")
+        return {"egressIp": None, "hosts": []}
+
+
 async def diagnose_provider(client: httpx.AsyncClient, prov: _DiagProvider) -> list[dict]:
     """Run DNS + TCP (always) and KEY (only if a key is configured)."""
     coros = [check_dns(prov.name, prov.host), check_tcp(prov.name, prov.host)]
@@ -257,8 +338,12 @@ async def diagnose(client: httpx.AsyncClient, providers: list[dict] | None = Non
     `providers` = current probe snapshot providers (name + status) so the verdict
     reflects the real probe state. Never raises — errors degrade to 'unknown'."""
     configured = [p for p in PROVIDERS if p.key()]
-    results = await asyncio.gather(
-        *(diagnose_provider(client, p) for p in configured), return_exceptions=True
+    # Checks (pass/fail) and the informational profile run concurrently.
+    results, profile = await asyncio.gather(
+        asyncio.gather(
+            *(diagnose_provider(client, p) for p in configured), return_exceptions=True
+        ),
+        environment_profile(client),
     )
     checks: list[dict] = []
     for prov, res in zip(configured, results):
@@ -269,4 +354,4 @@ async def diagnose(client: httpx.AsyncClient, providers: list[dict] | None = Non
             checks.extend(res)
 
     verdict = build_verdict(checks, providers)
-    return {"checks": checks, "checkedAt": _now_iso(), **verdict}
+    return {"checks": checks, "profile": profile, "checkedAt": _now_iso(), **verdict}

@@ -84,12 +84,26 @@ class DiagnosticCheck(BaseModel):
     detail: str
 
 
+class HostNetInfo(BaseModel):
+    provider: str
+    host: str
+    resolvedIps: list[str] | None = None  # DNS result (None = unknown)
+    tcpRttMs: int | None = None  # NETWORK round-trip, distinct from model latency
+
+
+class EnvironmentProfile(BaseModel):
+    """Contextual network picture — informational, never affects the verdict."""
+    egressIp: str | None = None
+    hosts: list[HostNetInfo] = []
+
+
 class LocalDiagnosis(BaseModel):
     checks: list[DiagnosticCheck]
     localHealthy: bool | None  # True=all pass, False=a fail, None=inconclusive
     verdictKind: VerdictKind
     verdict: str  # the headline attribution sentence
     checkedAt: str
+    profile: EnvironmentProfile | None = None  # network environment context
 
 
 DataSource = Literal["live", "mock"]

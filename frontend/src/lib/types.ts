@@ -95,10 +95,24 @@ export interface DiagnosticCheck {
   detail: string;
 }
 
+// Network environment context — informational, never affects pass/fail.
+export interface HostNetInfo {
+  provider: string;
+  host: string;
+  resolvedIps?: string[] | null; // DNS result (null/absent = unknown)
+  tcpRttMs?: number | null; // NETWORK round-trip, distinct from model latency
+}
+
+export interface EnvironmentProfile {
+  egressIp?: string | null;
+  hosts: HostNetInfo[];
+}
+
 export interface LocalDiagnosis {
   checks: DiagnosticCheck[];
   localHealthy: boolean | null;
   verdictKind: VerdictKind;
   verdict: string; // the headline attribution sentence
   checkedAt: string;
+  profile?: EnvironmentProfile | null; // network environment context
 }
