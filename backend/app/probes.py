@@ -472,39 +472,72 @@ class ProbeState:
 
 
 def _build_alerts(providers: list[dict]) -> list[dict]:
-    """Minimal rule-based alerts; full 'Agent' chain is a later module."""
+    """Per-MODEL rule-based alerts. Two tiers of the same provider are compared
+    so we can tell a model-specific problem (one tier impaired, the other fine)
+    apart from a provider-wide outage, and prefer same-provider failover.
+    Full 'Agent' chain is a later module."""
     healthy = [p for p in providers if p["status"] == "operational"]
-    best = max(healthy, key=lambda p: p["healthScore"], default=None)
+    best_global = max(healthy, key=lambda p: p["healthScore"], default=None)
     alerts: list[dict] = []
+
     for p in providers:
-        if p["status"] in ("degraded", "down"):
-            label = f"{p['name']} {p.get('tier', '')}".strip()
+        if p["status"] not in ("degraded", "down"):
+            continue
+        label = f"{p['name']} {p.get('tier', '')}".strip()
+        # Siblings = the same provider's other tier(s).
+        siblings = [q for q in providers if q["name"] == p["name"] and q["id"] != p["id"]]
+        healthy_siblings = [q for q in siblings if q["status"] == "operational"]
+        best_sibling = max(healthy_siblings, key=lambda q: q["healthScore"], default=None)
+
+        # Attribution scope: model-specific vs provider-wide vs cloud-side.
+        if best_sibling:
+            attribution = (
+                f"Model-specific: {label} ({p.get('model')}) is impaired, but the same "
+                f"provider's {best_sibling.get('tier')} model ({best_sibling.get('model')}, "
+                f"health {best_sibling['healthScore']}) is healthy — looks like a per-model "
+                f"issue, not a {p['name']}-wide outage."
+            )
+        elif siblings:  # has other tiers, none healthy
+            others = ", ".join(s.get("tier", "?") for s in siblings)
+            attribution = (
+                f"Provider-wide: every probed {p['name']} model is impaired "
+                f"({others} too) — likely a {p['name']} outage, not model-specific."
+            )
+        elif healthy:
+            attribution = "Cloud-side: other providers respond normally from the same probe."
+        else:
+            attribution = "Inconclusive: multiple providers affected — check your network."
+
+        # Failover: prefer the same provider's healthy tier (cheaper switch),
+        # otherwise the healthiest model anywhere.
+        alt_target = best_sibling or best_global
+        if alt_target:
+            same = alt_target["name"] == p["name"]
             alt = (
-                f"Route to {best['name']} {best.get('tier', '')} "
-                f"(health {best['healthScore']}, ~{best['latencyMs']}ms)."
-                if best
-                else "No healthy alternative currently available."
+                f"Route to {alt_target['name']} {alt_target.get('tier')} "
+                f"({alt_target.get('model')}, health {alt_target['healthScore']}, "
+                f"~{alt_target['latencyMs']}ms)"
+                + (" — same provider, minimal switch." if same else ".")
             )
-            alerts.append(
-                {
-                    "id": f"alert-{p['id']}-{p['status']}",
-                    "severity": "critical" if p["status"] == "down" else "warning",
-                    "providerId": p["id"],
-                    "title": f"{label} is {p['status']}",
-                    "attribution": (
-                        "Cloud-side: other targets respond normally from the same probe."
-                        if healthy
-                        else "Inconclusive: multiple targets affected — check your network."
-                    ),
-                    "recoveryEta": "Unknown (history-based estimate pending).",
-                    "recommendedAlternative": alt,
-                    "insight": (
-                        f"{label} ({p.get('model', '?')}) health is {p['healthScore']}/100 "
-                        f"(latency {p['latencyMs']}ms, QA {'pass' if p['qaCorrect'] else 'fail'})."
-                    ),
-                    "createdAt": _now_iso(),
-                }
-            )
+        else:
+            alt = "No healthy alternative currently available."
+
+        alerts.append(
+            {
+                "id": f"alert-{p['id']}-{p['status']}",
+                "severity": "critical" if p["status"] == "down" else "warning",
+                "providerId": p["id"],
+                "title": f"{label} ({p.get('model', '?')}) is {p['status']}",
+                "attribution": attribution,
+                "recoveryEta": "Unknown (history-based estimate pending).",
+                "recommendedAlternative": alt,
+                "insight": (
+                    f"{label} ({p.get('model', '?')}) health is {p['healthScore']}/100 "
+                    f"(latency {p['latencyMs']}ms, QA {'pass' if p['qaCorrect'] else 'fail'})."
+                ),
+                "createdAt": _now_iso(),
+            }
+        )
     return alerts
 
 

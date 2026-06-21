@@ -120,6 +120,48 @@ def test_list_gemini_strips_prefix_and_filters():
     _run_async(main())
 
 
+def _prov(pid, name, status, tier, model, score, latency=1000):
+    return {
+        "id": pid, "name": name, "status": status, "healthScore": score,
+        "latencyMs": latency, "tokenRate": 5, "qaCorrect": status == "operational",
+        "latencyHistory": [], "tier": tier, "model": model,
+    }
+
+
+def test_alert_model_specific():
+    # Claude flagship healthy, Claude mid down -> per-model, not provider-wide.
+    providers = [
+        _prov("claude-flagship", "Claude", "operational", "flagship", "claude-opus-4-8", 99),
+        _prov("claude-mid", "Claude", "down", "mid", "claude-sonnet-4-6", 0),
+        _prov("gpt-flagship", "GPT", "operational", "flagship", "gpt-5", 95),
+    ]
+    alerts = probes._build_alerts(providers)
+    assert len(alerts) == 1, alerts
+    a = alerts[0]
+    assert a["providerId"] == "claude-mid"
+    assert "Model-specific" in a["attribution"], a["attribution"]
+    assert "claude-opus-4-8" in a["attribution"]  # names the healthy sibling
+    # failover prefers the same provider's healthy tier
+    assert "same provider" in a["recommendedAlternative"]
+    assert "claude-opus-4-8" in a["recommendedAlternative"]
+
+
+def test_alert_provider_wide():
+    # Both Claude tiers down -> provider-wide; failover goes to another provider.
+    providers = [
+        _prov("claude-flagship", "Claude", "down", "flagship", "claude-opus-4-8", 0),
+        _prov("claude-mid", "Claude", "degraded", "mid", "claude-sonnet-4-6", 60),
+        _prov("gpt-flagship", "GPT", "operational", "flagship", "gpt-5", 95),
+    ]
+    alerts = probes._build_alerts(providers)
+    ids = {a["providerId"] for a in alerts}
+    assert ids == {"claude-flagship", "claude-mid"}, ids
+    for a in alerts:
+        assert "Provider-wide" in a["attribution"], a["attribution"]
+        assert "GPT" in a["recommendedAlternative"]
+        assert "same provider" not in a["recommendedAlternative"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
