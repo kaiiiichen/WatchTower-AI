@@ -34,6 +34,8 @@ export const DIAGNOSTIC_ICONS = {
 export const VERDICT_STYLES = {
   "service-side": { box: "border-emerald-500/40 bg-emerald-500/10", text: "text-emerald-300", tag: "Not your problem" },
   "all-clear": { box: "border-emerald-500/40 bg-emerald-500/10", text: "text-emerald-300", tag: "All clear" },
+  // Your account layer (quota/config) — actionable, but not a broken environment.
+  "account-side": { box: "border-amber-500/40 bg-amber-500/10", text: "text-amber-300", tag: "Your account" },
   "your-side": { box: "border-rose-500/50 bg-rose-500/15", text: "text-rose-300", tag: "Your problem" },
   indeterminate: { box: "border-white/15 bg-white/[0.04]", text: "text-white/60", tag: "Inconclusive" },
 } as const satisfies Record<VerdictKind, { box: string; text: string; tag: string }>;

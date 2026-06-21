@@ -166,12 +166,26 @@ def _local_health(checks: list[dict]) -> bool | None:
     return True
 
 
-def build_verdict(checks: list[dict], anomalies: list[str]) -> dict:
-    """Fuse local checks + probe anomalies into the attribution sentence.
+# Probe statuses bucketed by attribution. ACCOUNT faults are the user's account
+# layer (quota/config) but NOT a service outage; SERVICE faults are the provider's.
+_ACCOUNT_FAULTS = {"rate_limited": "quota/rate limit", "misconfigured": "configuration problem"}
+_SERVICE_FAULTS = {"down": "service outage", "degraded": "degraded service"}
 
-    `anomalies` = provider names whose probe shows a genuine SERVICE fault
-    (down/degraded). rate_limited/misconfigured are already self-attributed by
-    the probe layer, so they're not passed here."""
+
+def _account_clause(account: list[tuple[str, str]]) -> str:
+    return ", ".join(f"{name} ({_ACCOUNT_FAULTS[st]})" for name, st in account)
+
+
+def _service_clause(service: list[tuple[str, str]]) -> str:
+    return ", ".join(f"{name} ({_SERVICE_FAULTS[st]})" for name, st in service)
+
+
+def build_verdict(checks: list[dict], providers: list[dict] | None = None) -> dict:
+    """Fuse local checks + the probe layer's per-provider status into the
+    attribution sentence. `providers` = snapshot provider dicts (need name +
+    status). The verdict must reflect BOTH: a green local environment does NOT
+    mean "all clear" if a provider is rate-limited / misconfigured / down."""
+    providers = providers or []
     if not checks:
         return {
             "localHealthy": None,
@@ -181,6 +195,7 @@ def build_verdict(checks: list[dict], anomalies: list[str]) -> dict:
 
     local = _local_health(checks)
 
+    # 1. Any local check failed -> your environment.
     if local is False:
         reasons = "; ".join(
             f"{c['provider']} {c['check'].upper()} — {c['detail']}"
@@ -190,9 +205,10 @@ def build_verdict(checks: list[dict], anomalies: list[str]) -> dict:
         return {
             "localHealthy": False,
             "verdictKind": "your-side",
-            "verdict": f"It's on your side: {reasons}.",
+            "verdict": f"Your environment has a problem: {reasons}.",
         }
 
+    # Inconclusive local checks -> can't attribute confidently.
     if local is None:
         unknowns = ", ".join(
             f"{c['provider']} {c['check'].upper()}"
@@ -205,14 +221,30 @@ def build_verdict(checks: list[dict], anomalies: list[str]) -> dict:
             "verdict": f"Couldn't fully determine — inconclusive checks: {unknowns}. Treat as unverified.",
         }
 
-    # Local all green.
-    if anomalies:
-        who = ", ".join(dict.fromkeys(anomalies))  # dedupe, keep order
+    # Local all green -> attribution now depends entirely on the probe layer.
+    account = [(p["name"], p["status"]) for p in providers if p["status"] in _ACCOUNT_FAULTS]
+    service = [(p["name"], p["status"]) for p in providers if p["status"] in _SERVICE_FAULTS]
+
+    # 2. Account-layer faults (quota/config) — the user-actionable case takes
+    #    precedence for the headline; a concurrent outage is appended.
+    if account:
+        verdict = (
+            f"Your environment is fine — but {_account_clause(account)} is on your "
+            f"account layer (quota/config), NOT a service outage."
+        )
+        if service:
+            verdict += f" Separately, {_service_clause(service)} on the service side — not your problem."
+        return {"localHealthy": True, "verdictKind": "account-side", "verdict": verdict}
+
+    # 3. Service-side faults only.
+    if service:
         return {
             "localHealthy": True,
             "verdictKind": "service-side",
-            "verdict": f"Your environment is healthy — it's {who}'s problem, not yours.",
+            "verdict": f"Your environment is fine — {_service_clause(service)}. That's the provider's problem, not yours.",
         }
+
+    # 4. Local green AND every provider operational.
     return {
         "localHealthy": True,
         "verdictKind": "all-clear",
@@ -220,10 +252,10 @@ def build_verdict(checks: list[dict], anomalies: list[str]) -> dict:
     }
 
 
-async def diagnose(client: httpx.AsyncClient, anomalies: list[str] | None = None) -> dict:
+async def diagnose(client: httpx.AsyncClient, providers: list[dict] | None = None) -> dict:
     """Run diagnostics for every key-configured provider + build the verdict.
-    Never raises — provider-level errors degrade to 'unknown' checks."""
-    anomalies = anomalies or []
+    `providers` = current probe snapshot providers (name + status) so the verdict
+    reflects the real probe state. Never raises — errors degrade to 'unknown'."""
     configured = [p for p in PROVIDERS if p.key()]
     results = await asyncio.gather(
         *(diagnose_provider(client, p) for p in configured), return_exceptions=True
@@ -236,5 +268,5 @@ async def diagnose(client: httpx.AsyncClient, anomalies: list[str] | None = None
         else:
             checks.extend(res)
 
-    verdict = build_verdict(checks, anomalies)
+    verdict = build_verdict(checks, providers)
     return {"checks": checks, "checkedAt": _now_iso(), **verdict}

@@ -128,17 +128,12 @@ async def health() -> HealthSnapshot:
 @app.get("/diagnose", response_model=LocalDiagnosis)
 async def diagnose() -> LocalDiagnosis:
     """Local environment diagnosis cross-referenced with the probe layer.
-    Answers: is the problem yours (DNS/TCP/key) or the service's?"""
-    # Service anomalies = providers whose probe shows a genuine outage/degradation.
-    # rate_limited/misconfigured are already self-attributed by the probe layer.
-    anomalies: list[str] = []
+    Answers: is the problem yours (DNS/TCP/key), your account (quota/config),
+    or the service's? The verdict reflects the real per-provider probe status."""
+    providers: list[dict] = []
     if app.state.probe_state is not None:
-        anomalies = [
-            p["name"]
-            for p in app.state.probe_state.snapshot()["providers"]
-            if p["status"] in ("down", "degraded")
-        ]
-    result = await diagnostics.diagnose(app.state.client, anomalies)
+        providers = app.state.probe_state.snapshot()["providers"]
+    result = await diagnostics.diagnose(app.state.client, providers)
     return LocalDiagnosis(**result)
 
 

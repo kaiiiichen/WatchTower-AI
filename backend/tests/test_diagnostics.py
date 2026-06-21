@@ -145,47 +145,82 @@ def _checks(*statuses):
     ]
 
 
+def _provs(*pairs):
+    return [{"name": n, "status": s} for n, s in pairs]
+
+
+_GREEN = [
+    {"provider": "Claude", "check": "dns", "status": "pass", "detail": "ok"},
+    {"provider": "Claude", "check": "tcp", "status": "pass", "detail": "ok"},
+    {"provider": "Claude", "check": "key", "status": "pass", "detail": "ok"},
+]
+
+
 class TestVerdict:
-    def test_local_red_is_your_side(self):
+    # Branch 1: any local check failed -> your environment.
+    def test_branch1_local_red_is_your_side(self):
         checks = _checks(("Claude", "key", "fail"))
-        v = build_verdict(checks, anomalies=[])
+        v = build_verdict(checks, _provs(("Claude", "operational")))
         assert v["verdictKind"] == "your-side"
-        assert "your side" in v["verdict"].lower()
+        assert "your environment has a problem" in v["verdict"].lower()
         assert v["localHealthy"] is False
 
-    def test_local_green_plus_anomaly_is_service_side(self):
-        checks = _checks(("Claude", "dns", "pass"), ("Claude", "tcp", "pass"),
-                         ("Claude", "key", "pass"))
-        v = build_verdict(checks, anomalies=["Gemini"])
-        assert v["verdictKind"] == "service-side"
+    # Branch 2: local green + rate_limited/misconfigured -> account layer.
+    def test_branch2_rate_limited_is_account_side(self):
+        v = build_verdict(_GREEN, _provs(("Claude", "operational"), ("Gemini", "rate_limited")))
+        assert v["verdictKind"] == "account-side"
+        assert v["localHealthy"] is True
         assert "Gemini" in v["verdict"]
-        assert "not yours" in v["verdict"]
+        assert "account layer" in v["verdict"].lower()
+        assert "not a service outage" in v["verdict"].lower()
+        assert "all clear" not in v["verdict"].lower()  # the bug we're fixing
 
-    def test_local_green_no_anomaly_is_all_clear(self):
-        checks = _checks(("Claude", "dns", "pass"), ("Claude", "key", "pass"))
-        v = build_verdict(checks, anomalies=[])
+    def test_branch2_misconfigured_is_account_side(self):
+        v = build_verdict(_GREEN, _provs(("Gemini", "misconfigured")))
+        assert v["verdictKind"] == "account-side"
+        assert "configuration problem" in v["verdict"].lower()
+
+    # Branch 3: local green + down -> service side.
+    def test_branch3_down_is_service_side(self):
+        v = build_verdict(_GREEN, _provs(("Claude", "operational"), ("Gemini", "down")))
+        assert v["verdictKind"] == "service-side"
+        assert "not yours" in v["verdict"].lower()
+        assert "Gemini" in v["verdict"]
+
+    def test_branch3_degraded_is_service_side(self):
+        v = build_verdict(_GREEN, _provs(("GPT", "degraded")))
+        assert v["verdictKind"] == "service-side"
+
+    # Branch 4: local green AND all operational -> all-clear ONLY here.
+    def test_branch4_all_operational_is_all_clear(self):
+        v = build_verdict(_GREEN, _provs(("Claude", "operational"), ("GPT", "operational")))
         assert v["verdictKind"] == "all-clear"
+
+    def test_all_clear_only_when_truly_all_operational(self):
+        # The reported bug: rate_limited must NOT yield all-clear.
+        v = build_verdict(_GREEN, _provs(("Gemini", "rate_limited")))
+        assert v["verdictKind"] != "all-clear"
+
+    # Priority + combination.
+    def test_local_fail_beats_any_probe_status(self):
+        checks = _checks(("Claude", "key", "fail"))
+        v = build_verdict(checks, _provs(("Gemini", "down"), ("GPT", "rate_limited")))
+        assert v["verdictKind"] == "your-side"
+
+    def test_account_and_service_both_present(self):
+        v = build_verdict(_GREEN, _provs(("Gemini", "rate_limited"), ("GPT", "down")))
+        assert v["verdictKind"] == "account-side"  # user-actionable headline
+        assert "Gemini" in v["verdict"] and "GPT" in v["verdict"]  # both surfaced
 
     def test_unknown_only_is_indeterminate(self):
         checks = _checks(("Claude", "key", "unknown"))
-        v = build_verdict(checks, anomalies=["Gemini"])
+        v = build_verdict(checks, _provs(("Gemini", "down")))
         assert v["verdictKind"] == "indeterminate"
         assert v["localHealthy"] is None
 
-    def test_fail_takes_precedence_over_anomaly(self):
-        # Your broken key is your problem first, even if a service is also down.
-        checks = _checks(("Claude", "key", "fail"), ("GPT", "dns", "pass"))
-        v = build_verdict(checks, anomalies=["GPT"])
-        assert v["verdictKind"] == "your-side"
-
     def test_empty_checks(self):
-        v = build_verdict([], anomalies=[])
+        v = build_verdict([], [])
         assert v["verdictKind"] == "indeterminate"
-
-    def test_service_side_dedupes_provider_names(self):
-        checks = _checks(("Claude", "dns", "pass"))
-        v = build_verdict(checks, anomalies=["Gemini", "Gemini"])
-        assert v["verdict"].count("Gemini") == 1
 
 
 class TestLocalHealth:
@@ -221,9 +256,36 @@ def test_diagnose_builds_full_result(monkeypatch):
 
     async def main():
         async with _client(handler) as c:
-            return await diagnose(c, anomalies=[])
+            return await diagnose(c, [{"name": "Claude", "status": "operational"}])
 
     result = _run_async(main())
     assert {c["check"] for c in result["checks"]} == {"dns", "tcp", "key"}
     assert result["verdictKind"] == "all-clear"
     assert "checkedAt" in result
+
+
+def test_diagnose_rate_limited_is_not_all_clear(monkeypatch):
+    # End-to-end: local green + a rate_limited provider must NOT be "all clear".
+    claude = _claude()
+    monkeypatch.setattr(diagnostics, "PROVIDERS", [claude])
+    monkeypatch.setattr(claude, "key", lambda: "sk-test")
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [("x",)])
+
+    class FakeWriter:
+        def close(self): pass
+        async def wait_closed(self): pass
+
+    async def fake_open(host, port):
+        return (object(), FakeWriter())
+    monkeypatch.setattr(diagnostics.asyncio, "open_connection", fake_open)
+
+    def handler(req):
+        return httpx.Response(200, json={"data": []})
+
+    async def main():
+        async with _client(handler) as c:
+            return await diagnose(c, [{"name": "Gemini", "status": "rate_limited"}])
+
+    result = _run_async(main())
+    assert result["verdictKind"] == "account-side"
+    assert "all clear" not in result["verdict"].lower()

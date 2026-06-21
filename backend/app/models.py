@@ -66,9 +66,15 @@ class CommunitySignal(BaseModel):
 
 # --- Local environment diagnostics ----------------------------------------
 DiagnosticStatus = Literal["pass", "fail", "unknown"]
-# your-side: a local check failed. service-side: local clean, a provider is down.
-# all-clear: everything healthy. indeterminate: couldn't determine.
-VerdictKind = Literal["your-side", "service-side", "all-clear", "indeterminate"]
+# your-side:    a local check failed (DNS/TCP/key) — your environment.
+# account-side: local clean, but a provider is rate_limited/misconfigured —
+#               your account layer (quota/config), not a service outage.
+# service-side: local clean, but a provider is down/degraded — the provider's fault.
+# all-clear:    local clean AND every provider operational.
+# indeterminate: couldn't determine.
+VerdictKind = Literal[
+    "your-side", "account-side", "service-side", "all-clear", "indeterminate"
+]
 
 
 class DiagnosticCheck(BaseModel):

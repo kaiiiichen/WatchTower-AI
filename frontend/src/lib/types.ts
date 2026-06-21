@@ -82,9 +82,10 @@ export interface HealthSnapshot {
 // Answers the product's core question: is the problem yours or the service's?
 export type DiagnosticStatus = "pass" | "fail" | "unknown";
 export type VerdictKind =
-  | "your-side" // a local check failed
-  | "service-side" // local clean, a provider is down
-  | "all-clear" // everything healthy
+  | "your-side" // a local check failed — your environment
+  | "account-side" // local clean, provider rate_limited/misconfigured — your account layer
+  | "service-side" // local clean, a provider is down/degraded — the provider's fault
+  | "all-clear" // local clean AND every provider operational
   | "indeterminate"; // couldn't determine
 
 export interface DiagnosticCheck {

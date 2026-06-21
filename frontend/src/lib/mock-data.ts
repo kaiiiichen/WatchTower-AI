@@ -67,8 +67,9 @@ const PROVIDER_SEEDS: ProviderSeed[] = [
   },
 ];
 
-// Mock diagnosis for standalone dev: local all-green, and since the mock Gemini
-// is rate-limited (your account) there's no SERVICE anomaly -> all-clear.
+// Mock diagnosis for standalone dev. Local checks are all green, but the mock
+// snapshot's Gemini is rate-limited — so the verdict is "account-side", NOT
+// "all clear" (this is exactly the bug the verdict fix addresses).
 export function buildMockDiagnosis(): LocalDiagnosis {
   const now = new Date().toISOString();
   const checks = (["Claude", "GPT", "Gemini"] as const).flatMap((provider) => [
@@ -79,8 +80,9 @@ export function buildMockDiagnosis(): LocalDiagnosis {
   return {
     checks,
     localHealthy: true,
-    verdictKind: "all-clear",
-    verdict: "All clear — your environment and every probed service look healthy.",
+    verdictKind: "account-side",
+    verdict:
+      "Your environment is fine — but Gemini (quota/rate limit) is on your account layer (quota/config), NOT a service outage.",
     checkedAt: now,
   };
 }
