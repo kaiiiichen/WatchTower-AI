@@ -1,5 +1,5 @@
 """Pydantic models whose field names match frontend/src/lib/types.ts exactly
-(camelCase). Serialized JSON is therefore a drop-in for the mock route."""
+(camelCase)."""
 from typing import Literal
 
 from pydantic import BaseModel
@@ -54,20 +54,24 @@ class Alert(BaseModel):
     fusionMode: str | None = None
 
 
-# Reddit community-signal heat for a provider. "unavailable" = the source
+# Hacker News community-signal heat for a provider. "unavailable" = the source
 # couldn't be reached this cycle — corroboration only, never blocks detection.
 CommunitySignalStatus = Literal["normal", "elevated", "spike", "unavailable"]
 
 
 class CommunitySignal(BaseModel):
     providerId: str  # provider name this signal corroborates (e.g. "Claude")
-    subreddit: str | None = None
+    source: str = "hackernews"
+    searchQuery: str | None = None
+    lookbackHours: int = 24
     status: CommunitySignalStatus
     complaintRate: float  # matched / total posts this cycle (0.0 when unavailable)
     baseline: float  # rolling mean complaint rate
     postCount: int
     matchedPosts: int
     sampledAt: str | None = None
+    # Per-source corroboration entries (HN + optional Downdetector, etc.).
+    sources: list[dict] = []
 
 
 OfficialSignalStatus = Literal[
@@ -185,7 +189,7 @@ class BacktestReport(BaseModel):
     notes: dict[str, str]
 
 
-DataSource = Literal["live", "mock"]
+DataSource = Literal["live"]
 
 
 class HealthSnapshot(BaseModel):

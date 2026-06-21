@@ -1,0 +1,17 @@
+{
+  "1": [
+    {
+      "1": "inc-resolved",
+      "2": "Past outage",
+      "3": 1,
+      "4": [
+        {
+          "1": 4,
+          "3": "2026-06-20T12:00:00Z",
+          "4": "This incident has been resolved."
+        }
+      ],
+      "6": [1]
+    }
+  ]
+}

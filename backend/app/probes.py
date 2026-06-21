@@ -551,6 +551,41 @@ class ProbeState:
         )
         self.updated_at = _now_iso()
 
+    def apply_demo_force_down(self, targets: list[dict]) -> None:
+        """Demo-only: override a provider's snapshot to synthetic degraded."""
+        forced = config.DEMO_FORCE_DOWN
+        if not forced:
+            return
+        overridden = 0
+        demo = {
+            "status": "degraded",
+            "healthScore": 42,
+            "latencyMs": 4200,
+            "tokenRate": 12,
+            "qaCorrect": False,
+        }
+        for target in targets:
+            if target["name"] != forced:
+                continue
+            tid = target["id"]
+            self._latest[tid] = _build_provider_health(
+                target=target,
+                status=demo["status"],
+                score=demo["healthScore"],
+                latency=demo["latencyMs"],
+                token_rate=demo["tokenRate"],
+                qa_correct=demo["qaCorrect"],
+                history=list(self._history[tid]),
+            )
+            overridden += 1
+        if overridden:
+            self.updated_at = _now_iso()
+            log.info(
+                "DEMO_FORCE_DOWN=%s: injected synthetic degraded status for %d target(s)",
+                forced,
+                overridden,
+            )
+
     def snapshot(self) -> dict:
         providers = [self._latest[t["id"]] for t in self._targets]
         community = self.community.by_provider() if self.community else None
@@ -586,6 +621,29 @@ def _official_attribution_text(sig: dict) -> str:
     return " ".join(chunks) + f" — source: {page}"
 
 
+def _format_spiking_community_source(entry: dict) -> str:
+    """Human-readable label for one spiking corroboration source."""
+    src = entry.get("source", "")
+    if src == "hackernews":
+        post_count = entry.get("postCount", 0)
+        rate = entry.get("complaintRate", 0)
+        return f"Hacker News ({post_count} posts, rate {rate}/hr)"
+    if src == "Downdetector":
+        count = entry.get("count", 0)
+        return f"Downdetector ({count} recent reports)"
+    name = src or "community signal"
+    return str(name)
+
+
+def _spiking_community_label(sig: dict) -> str:
+    """Joined labels for every source entry with spike == True."""
+    sources = sig.get("sources") or []
+    spiking = [e for e in sources if e.get("spike")]
+    if spiking:
+        return " + ".join(_format_spiking_community_source(e) for e in spiking)
+    return "community signal"
+
+
 def _build_alerts(
     providers: list[dict],
     community: dict | None = None,
@@ -595,7 +653,7 @@ def _build_alerts(
     so we can tell a model-specific problem (one tier impaired, the other fine)
     apart from a provider-wide outage, and prefer same-provider failover.
 
-    `community` maps provider name -> latest Reddit signal dict (or None). When a
+    `community` maps provider name -> latest HN community signal dict (or None). When a
     probe anomaly coincides with a community-signal spike, the alert is upgraded
     to a confirmed widespread event. It's purely additive corroboration — absent
     or unavailable community data changes nothing.
@@ -732,11 +790,17 @@ def _build_alerts(
             elif siblings:  # has other tiers, none healthy
                 others = ", ".join(s.get("tier", "?") for s in siblings)
                 attribution = (
-                    f"Provider-wide: every probed {p['name']} model is impaired "
-                    f"({others} too) — likely a {p['name']} outage, not model-specific."
+                    f"Provider-wide from your vantage point: every {p['name']} model "
+                    f"probed from this account is impaired ({others} too) — looks like "
+                    f"a {p['name']} outage, but from a single account this can't be told "
+                    f"apart from a route/region-local fault. Community signal corroborates "
+                    f"whether it's widespread."
                 )
             elif healthy:
-                attribution = "Cloud-side: other providers respond normally from the same probe."
+                attribution = (
+                    f"Not your network: other providers respond fine from this same "
+                    f"probe, so the fault is specific to {p['name']} as seen from your account."
+                )
             else:
                 attribution = "Inconclusive: multiple providers affected — check your network."
 
@@ -763,17 +827,15 @@ def _build_alerts(
                     "acknowledgment (see Detection Gap)."
                 )
 
-            # Community corroboration: a SERVICE anomaly + a Reddit complaint spike
+            # Community corroboration: a SERVICE anomaly + a community-signal spike
             # for the same provider => confirmed widespread event when not yet officially
             # acknowledged. Corroboration only — never the basis for the alert itself.
             sig = community.get(p["name"])
             community_confirmed = bool(sig and sig.get("status") == "spike")
             if community_confirmed and not official_acknowledged:
-                sub = sig.get("subreddit")
+                corroboration = _spiking_community_label(sig)
                 insight += (
-                    f" CONFIRMED WIDESPREAD EVENT — community signal is spiking on "
-                    f"r/{sub} (complaint rate {sig.get('complaintRate')} vs baseline "
-                    f"{sig.get('baseline')} over {sig.get('postCount')} posts). Probe "
+                    f" CONFIRMED WIDESPREAD EVENT — {corroboration}. Probe "
                     f"anomaly + community spike corroborate each other; this looks like "
                     f"a real outage the provider has not acknowledged on its status page yet."
                 )
@@ -852,5 +914,6 @@ async def probe_all(client: httpx.AsyncClient, state: ProbeState, targets: list[
             state.apply(target, ProbeResult(False, 0, False, 0, None, str(result)))
         else:
             state.apply(target, result)
+    state.apply_demo_force_down(targets)
     # Layers 1 + 2: report degraded/down providers to Sentry (no-op without init).
     monitoring.report_incidents(state.snapshot()["providers"], state.updated_at)

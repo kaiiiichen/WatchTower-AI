@@ -84,6 +84,37 @@ OPENAI_MODEL_MID = os.getenv("OPENAI_MODEL_MID", "gpt-4o-mini")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
 GEMINI_MODEL_MID = os.getenv("GEMINI_MODEL_MID", "gemini-1.5-flash")
 
+# --- Browserbase (Downdetector corroboration) ------------------------------
+_raw_browserbase_key = os.getenv("BROWSERBASE_API_KEY")
+if _raw_browserbase_key and not _raw_browserbase_key.isascii():
+    log.error(
+        "BROWSERBASE_API_KEY contains non-ASCII characters — Downdetector disabled. "
+        "Shell exports override .env; remove placeholders like bb_你的key from your "
+        "uvicorn command and use the real key in backend/.env only."
+    )
+    BROWSERBASE_API_KEY = None
+else:
+    BROWSERBASE_API_KEY = _raw_browserbase_key
+DOWNDETECTOR_ENABLED = os.getenv("DOWNDETECTOR_ENABLED", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+BROWSERBASE_SESSIONS_URL = os.getenv(
+    "BROWSERBASE_SESSIONS_URL",
+    "https://api.browserbase.com/v1/sessions",
+)
+# Slugs verified against live Downdetector URLs (Gemini is googlegemini, not google-gemini).
+DOWNDETECTOR_SLUGS: dict[str, str] = {
+    "Claude": os.getenv("DOWNDETECTOR_SLUG_CLAUDE", "claude-ai"),
+    "GPT": os.getenv("DOWNDETECTOR_SLUG_GPT", "openai"),
+    "Gemini": os.getenv("DOWNDETECTOR_SLUG_GEMINI", "googlegemini"),
+}
+DOWNDETECTOR_WAIT_TIMEOUT_MS = _env_int("DOWNDETECTOR_WAIT_TIMEOUT_MS", "40000")
+DOWNDETECTOR_RECENT_HOURS = _env_int("DOWNDETECTOR_RECENT_HOURS", "24")
+DOWNDETECTOR_MIN_COMMENTS = _env_int("DOWNDETECTOR_MIN_COMMENTS", "5")
+DOWNDETECTOR_SUMMARY_MODEL = os.getenv("DOWNDETECTOR_SUMMARY_MODEL", "claude-3-5-haiku-latest")
+
 # --- Community signals (Reddit + HN) ---------------------------------------
 # Corroboration layer, NOT a dependency: if Reddit/HN is unreachable the probe
 # pipeline is unaffected and signals report "unavailable".
@@ -93,19 +124,14 @@ GEMINI_MODEL_MID = os.getenv("GEMINI_MODEL_MID", "gemini-1.5-flash")
 REDDIT_USER_AGENT = os.getenv(
     "REDDIT_USER_AGENT", "python:watchtower-ai:v1.0 (by /u/watchtower_ai)"
 )
-# How often to poll Reddit/HN (seconds). Kept well above rate-limit floors.
-COMMUNITY_INTERVAL = _env_int("COMMUNITY_INTERVAL", "60")
-# Hacker News Algolia search API base URL.
 HN_ALGOLIA_BASE = os.getenv("HN_ALGOLIA_BASE", "https://hn.algolia.com/api/v1")
-# How many hours back to search HN stories for outage signals.
-COMMUNITY_LOOKBACK_HOURS = _env_int("COMMUNITY_LOOKBACK_HOURS", "24")
-
-# --- Official status pages (Statuspage JSON) -------------------------------
-# Polls less often than probes — official pages update on minute-scale cadence.
-OFFICIAL_STATUS_INTERVAL = _env_int("OFFICIAL_STATUS_INTERVAL", "120")
-# Posts pulled per subreddit per poll.
+# How often to poll HN (seconds).
+COMMUNITY_INTERVAL = _env_int("COMMUNITY_INTERVAL", "60")
+# Stories scanned per provider per poll (HN Algolia max hitsPerPage is 1000).
 COMMUNITY_POST_LIMIT = _env_int("COMMUNITY_POST_LIMIT", "25")
-# Rolling complaint-rate samples kept per subreddit for the spike baseline.
+# Only consider stories from the last N hours.
+COMMUNITY_LOOKBACK_HOURS = _env_int("COMMUNITY_LOOKBACK_HOURS", "24")
+# Rolling complaint-rate samples kept per provider for the spike baseline.
 COMMUNITY_BASELINE_LEN = _env_int("COMMUNITY_BASELINE_LEN", "20")
 # Min samples before a baseline is trustworthy enough to flag a spike.
 COMMUNITY_MIN_BASELINE = _env_int("COMMUNITY_MIN_BASELINE", "3")
@@ -116,6 +142,38 @@ COMMUNITY_SPIKE_FACTOR = _env_float("COMMUNITY_SPIKE_FACTOR", "2.0")
 COMMUNITY_SPIKE_DELTA = _env_float("COMMUNITY_SPIKE_DELTA", "0.12")
 # "elevated" (noteworthy but not confirmed) sits between baseline and spike.
 COMMUNITY_ELEVATED_DELTA = _env_float("COMMUNITY_ELEVATED_DELTA", "0.06")
+
+# --- Official status pages (Statuspage JSON) -------------------------------
+# Polls less often than probes — official pages update on minute-scale cadence.
+OFFICIAL_STATUS_INTERVAL = _env_int("OFFICIAL_STATUS_INTERVAL", "120")
+
+# Gemini AI Studio status — isolated headless-browser adapter (see gemini_status_browser.py).
+# Set GEMINI_STATUS_BROWSER=0 to disable without removing code.
+# Requires: pip install playwright && playwright install chromium
+GEMINI_STATUS_BROWSER = os.getenv("GEMINI_STATUS_BROWSER", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+GEMINI_STATUS_BROWSER_TIMEOUT = _env_float("GEMINI_STATUS_BROWSER_TIMEOUT", "30")
+
+# --- Demo overrides (OFF by default) ---------------------------------------
+# Force a provider's reported probe status to degraded so the incident panel and
+# Downdetector corroboration path run deterministically. Real probes and HN/DD
+# fetches still execute; only the snapshot status is overridden.
+# Valid: Claude | GPT | Gemini (case-insensitive). Empty = disabled.
+_demo_force_raw = os.getenv("DEMO_FORCE_DOWN", "").strip()
+DEMO_FORCE_DOWN: str | None = None
+if _demo_force_raw:
+    _demo_provider_names = {"claude": "Claude", "gpt": "GPT", "gemini": "Gemini"}
+    _demo_key = _demo_force_raw.lower()
+    if _demo_key in _demo_provider_names:
+        DEMO_FORCE_DOWN = _demo_provider_names[_demo_key]
+    else:
+        log.warning(
+            "Ignoring DEMO_FORCE_DOWN=%r — expected Claude, GPT, or Gemini",
+            _demo_force_raw,
+        )
 
 # --- Sentry ----------------------------------------------------------------
 # SENTRY_DSN unset -> Sentry is disabled (capture/spans become no-ops).

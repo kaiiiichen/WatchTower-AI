@@ -1,0 +1,22 @@
+{
+  "1": [
+    {
+      "1": "inc-2026-06-21",
+      "2": "Elevated errors on Gemini API",
+      "3": 1,
+      "4": [
+        {
+          "1": 1,
+          "3": "2026-06-21T10:00:00Z",
+          "4": "We detected increased error rates on the Gemini API."
+        },
+        {
+          "1": 5,
+          "3": "2026-06-21T11:00:00Z",
+          "4": "Mitigation is in progress."
+        }
+      ],
+      "6": [1, 3]
+    }
+  ]
+}

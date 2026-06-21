@@ -30,6 +30,7 @@ A provider with **no API key** is reported as `unknown` (never crashes the loop)
 ```bash
 cd backend
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/playwright install chromium   # Gemini official status (headless browser)
 cp .env.example .env   # fill in the keys you have
 .venv/bin/uvicorn app.main:app --reload --port 8000
 curl localhost:8000/health
@@ -44,6 +45,9 @@ route proxies this engine (and falls back to mock data if unreachable).
 - `app/probes.py` — per-provider adapters, scoring, rolling history, `probe_all`
 - `app/models.py` — Pydantic models mirroring the frontend types
 - `app/main.py` — FastAPI app, background probe loop, `GET /health`
+- `app/gemini_status_browser.py` — **optional isolated adapter**: headless Chromium
+  intercepts AI Studio `ListIncidentsHistory` for Gemini official status.
+  Disable with `GEMINI_STATUS_BROWSER=0`; delete the file + one import to remove.
 
 ## Tests
 `PYTHONPATH=. .venv/bin/python tests/test_discovery.py` — 8 offline tests

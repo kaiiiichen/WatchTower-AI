@@ -55,7 +55,7 @@ On backend failure, health/backtest routes fall back to mock data and set `x-wat
 | `src/components/ProviderCard.tsx` | Per-tier health card + latency sparkline |
 | `src/components/AlertBanner.tsx` | Attribution, failover, community confirmation |
 | `src/components/LocalDiagnostics.tsx` | Environment checks + verdict |
-| `src/components/CommunitySignals.tsx` | Reddit corroboration heat |
+| `src/components/CommunitySignals.tsx` | HN corroboration heat |
 | `src/components/DetectionGap.tsx` | VU dataset backtest charts |
 
 ## Stack

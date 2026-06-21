@@ -1,6 +1,4 @@
-// Shared shapes for WatchTower AI dashboard.
-// These mirror what the FastAPI backend will eventually return, so swapping
-// the mock route for the real backend is a no-op on the frontend.
+// Shared shapes for WatchTower AI dashboard — aligned with FastAPI responses.
 
 // "down" is reserved for genuine SERVICE outages (5xx / timeout). Account/config
 // faults are split out so the UI answers "your problem vs the service's":
@@ -47,7 +45,7 @@ export interface Alert {
   recommendedAlternative: string; // 3. healthiest alternative
   insight: string; // 4. LLM plain-language insight
   createdAt: string;
-  // True when a Reddit community-signal spike corroborates the probe anomaly,
+  // True when an HN community-signal spike corroborates the probe anomaly,
   // upgrading the alert to a "confirmed widespread event".
   communityConfirmed?: boolean;
   officialAcknowledged?: boolean;
@@ -81,7 +79,7 @@ export interface OfficialStatusSignal {
   sampledAt?: string | null;
 }
 
-// Reddit community-signal heat for a provider. "unavailable" = source couldn't
+// Hacker News community-signal heat for a provider. "unavailable" = source couldn't
 // be reached this cycle — corroboration only, never blocks core detection.
 export type CommunitySignalStatus =
   | "normal"
@@ -89,15 +87,43 @@ export type CommunitySignalStatus =
   | "spike"
   | "unavailable";
 
+/** Per-source entry inside a merged CommunitySignal.sources list. */
+export interface HackerNewsSourceEntry {
+  source: "hackernews";
+  status: CommunitySignalStatus;
+  spike?: boolean;
+  searchQuery?: string | null;
+  complaintRate?: number;
+  baseline?: number;
+  postCount?: number;
+  matchedPosts?: number;
+}
+
+export interface DowndetectorSourceEntry {
+  source: "Downdetector";
+  spike?: boolean;
+  problems_found?: boolean;
+  count?: number;
+  headline?: string | null;
+  summary?: string | null;
+  comments?: { text: string; age: string }[];
+  url?: string;
+}
+
+export type CommunitySourceEntry = HackerNewsSourceEntry | DowndetectorSourceEntry;
+
 export interface CommunitySignal {
   providerId: string; // provider name this corroborates (e.g. "Claude")
-  subreddit?: string | null;
+  source?: string; // e.g. "hackernews"
+  searchQuery?: string | null;
+  lookbackHours?: number;
   status: CommunitySignalStatus;
   complaintRate: number; // matched / total posts this cycle
   baseline: number; // rolling mean complaint rate
   postCount: number;
   matchedPosts: number;
   sampledAt?: string | null;
+  sources?: CommunitySourceEntry[];
 }
 
 // --- Detection lead-time backtest (VU Amsterdam dataset) -------------------
@@ -150,7 +176,7 @@ export interface BacktestReport {
   notes: Record<string, string>;
 }
 
-export type DataSource = "live" | "mock";
+export type DataSource = "live";
 
 export interface HealthSnapshot {
   providers: ProviderHealth[];

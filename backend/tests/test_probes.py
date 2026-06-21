@@ -274,6 +274,46 @@ class TestProbeState:
         claude = next(p for p in snap["providers"] if p["id"] == "claude-flagship")
         assert len(claude["latencyHistory"]) == config.HISTORY_LEN
 
+    def test_demo_force_down_overrides_matching_provider(self, monkeypatch):
+        monkeypatch.setattr(config, "DEMO_FORCE_DOWN", "GPT")
+        targets = _make_targets()
+        state = ProbeState(targets)
+        ok = ProbeResult(available=True, latency_ms=800, qa_correct=True, token_rate=80, http_status=200)
+        state.apply(targets[0], ok)  # Claude stays operational
+        state.apply(targets[1], ok)  # GPT would be operational without override
+        state.apply_demo_force_down(targets)
+
+        snap = state.snapshot()
+        claude = next(p for p in snap["providers"] if p["name"] == "Claude")
+        gpt = next(p for p in snap["providers"] if p["name"] == "GPT")
+        assert claude["status"] == "operational"
+        assert gpt["status"] == "degraded"
+        assert gpt["healthScore"] == 42
+        assert gpt["latencyMs"] == 4200
+        assert gpt["qaCorrect"] is False
+        assert any(a["providerId"] == "gpt-flagship" for a in snap["alerts"])
+
+    def test_demo_force_down_off_by_default(self, monkeypatch):
+        monkeypatch.setattr(config, "DEMO_FORCE_DOWN", None)
+        targets = _make_targets()
+        state = ProbeState(targets)
+        ok = ProbeResult(available=True, latency_ms=800, qa_correct=True, token_rate=80, http_status=200)
+        state.apply(targets[1], ok)
+        state.apply_demo_force_down(targets)
+        gpt = next(p for p in state.snapshot()["providers"] if p["name"] == "GPT")
+        assert gpt["status"] == "operational"
+
+    def test_demo_force_down_marks_provider_faulting(self, monkeypatch):
+        from app.community_shared import faulting_providers
+
+        monkeypatch.setattr(config, "DEMO_FORCE_DOWN", "GPT")
+        targets = _make_targets()
+        state = ProbeState(targets)
+        ok = ProbeResult(available=True, latency_ms=800, qa_correct=True, token_rate=80, http_status=200)
+        state.apply(targets[1], ok)
+        state.apply_demo_force_down(targets)
+        assert "GPT" in faulting_providers(state.snapshot()["providers"])
+
     def test_snapshot_includes_updated_at(self):
         targets = _make_targets()
         state = ProbeState(targets)
@@ -395,9 +435,9 @@ class TestBuildAlerts:
         assert "Claude" in a["recommendedAlternative"]
 
     def test_community_spike_never_confirms_config_fault(self):
-        # A Reddit spike must NOT upgrade an account/config problem — Reddit
+        # An HN spike must NOT upgrade an account/config problem — community
         # chatter can't corroborate YOUR quota running out.
-        community = {"Gemini": {"status": "spike", "subreddit": "Bard",
+        community = {"Gemini": {"status": "spike", "searchQuery": "Google Gemini",
                                 "complaintRate": 0.5, "baseline": 0.05, "postCount": 25}}
         for status in ("rate_limited", "misconfigured"):
             a = _build_alerts(self._gemini(status), community)[0]

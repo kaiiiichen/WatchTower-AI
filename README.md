@@ -1,93 +1,218 @@
 # WatchTower AI
 
-**Flight radar for AI services** — detect Claude / GPT / Gemini outages before the official status page, and answer the question that keeps you up at 2 AM: *is it the service, or is it me?*
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black)](frontend/package.json)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688)](backend/requirements.txt)
 
-Built for [Cal AI Hackathon 2026](https://calai.dev) as a solo project. WatchTower AI is a **local developer tool**: you run it on your machine, your API keys stay yours, and probe history lives in a local SQLite file — nothing is uploaded to a shared cloud service.
+Next.js · React · TypeScript · Tailwind · FastAPI · Python · SQLite · Sentry
 
----
+**English** · **中文**
 
-## Table of contents
-
-- [The problem](#the-problem)
-- [What WatchTower AI does](#what-watchtower-ai-does)
-- [Architecture](#architecture)
-- [Quick start](#quick-start)
-- [Configuration](#configuration)
-- [API reference](#api-reference)
-- [Detection gap & academic backing](#detection-gap--academic-backing)
-- [Product philosophy](#product-philosophy)
-- [Project structure](#project-structure)
-- [Testing](#testing)
-- [Deployment notes](#deployment-notes)
-- [References](#references)
+| | |
+| --- | --- |
+| **Source** | https://github.com/kaiiiichen/WatchTower-AI |
+| **Hackathon** | [UC Berkeley AI Hackathon 2026](https://ai-hackathon-2026.devpost.com/) |
+| **Local demo** | Frontend `http://localhost:3000` · Backend `http://localhost:8000` |
 
 ---
 
-## The problem
+## English
 
-You're shipping with Claude, GPT, or Gemini. Something breaks at midnight. Is Anthropic down? Is your API key wrong? Is campus Wi‑Fi blocking Reddit? Is it just you?
+→ [中文](#中文)
 
-Official status pages are slow, incomplete, and never tell you whether **your** environment is fine. WatchTower AI exists to close that gap: continuous independent probing, quality checks beyond "HTTP 200", local environment diagnosis, and honest data about how far official pages lag behind real user impact.
+### Contents
 
----
+1. [The idea](#the-idea)
+2. [UC Berkeley AI Hackathon 2026](#uc-berkeley-ai-hackathon-2026)
+3. [What WatchTower AI does](#what-watchtower-ai-does)
+4. [Technical reference](#technical-reference)
+   - [Requirements](#requirements)
+   - [Quick start](#quick-start)
+   - [Configuration](#configuration)
+   - [API reference](#api-reference)
+   - [Architecture](#architecture)
+   - [Detection gap & academic backing](#detection-gap--academic-backing)
+   - [Product philosophy](#product-philosophy)
+   - [Project structure](#project-structure)
+   - [Testing](#testing)
+   - [Deployment notes](#deployment-notes)
+   - [Documentation map](#documentation-map)
+   - [License](#license)
 
-## What WatchTower AI does
+### The idea
 
-WatchTower AI is organized in layers. Each layer is implemented and live — not a slide deck.
+**WatchTower AI** is **flight radar for AI services** — detect Claude / GPT / Gemini outages before the official status page, and answer the question that keeps you up at 2 AM: *is it the service, or is it me?*
 
-### 1. Probe layer — real-time monitoring
+Official status pages are slow, incomplete, and never tell you whether **your** environment is fine. WatchTower AI closes that gap with continuous independent probing, QA checks beyond "HTTP 200", local environment diagnosis, and honest data about how far official pages lag behind real user impact.
+
+It is a **local developer tool**: you run it on your machine, your API keys stay yours, and probe history lives in a local SQLite file — nothing is uploaded to a shared cloud service.
+
+### UC Berkeley AI Hackathon 2026
+
+Built at **[UC Berkeley AI Hackathon 2026](https://ai-hackathon-2026.devpost.com/)** (June 20–21, 2026) by **Kai Chen** ([@kaiiiichen](https://github.com/kaiiiichen)) as a **solo project**. All implementation occurred during the hackathon window.
+
+#### Elevator pitch (for Devpost)
+
+> WatchTower AI is a local flight radar for Claude, GPT, and Gemini — it probes providers every 30 seconds with real QA checks, diagnoses whether an outage is on your side or theirs, and backs its "detection gap" claims with peer-reviewed outage research. When something breaks at 2 AM, you get an honest answer in seconds instead of refreshing a status page that may still say "operational."
+
+#### Devpost submission checklist
+
+| Requirement | Where |
+| --- | --- |
+| 2–3 sentence summary | Use the elevator pitch above |
+| Project image | Screenshot of the dashboard (`localhost:3000` or deployed URL) |
+| GitHub repository link | https://github.com/kaiiiichen/WatchTower-AI |
+| Team name & table number | Enter on [Devpost](https://ai-hackathon-2026.devpost.com/) |
+| Demo | Live dashboard + `GET /health` JSON; 5-minute table presentation |
+| Built during hackathon | Yes — ideation allowed beforehand; all code written June 20–21, 2026 |
+
+**Judging alignment** (Application · Functionality · Creativity · Technical complexity):
+
+- **Application** — Every LLM developer hits midnight outages; independent probing + local diagnostics is immediately usable.
+- **Functionality** — Full probe loop, four-way verdict, alerts, community corroboration, VU dataset backtest, optional Sentry — all implemented, not mocked.
+- **Creativity** — QA probe ("2+2=4"), precursor `degrading` trend, HN corroboration as additive signal, honest boundaries on what we can claim.
+- **Technical complexity** — Dynamic model discovery, asyncio concurrent probes, SQLite history, Playwright Gemini status adapter, three-layer Sentry integration, research backtest from bundled CSV.
+
+**Sponsor track note:** Sentry integration (events + fingerprinting + performance traces with API-key redaction) qualifies for the [Best Use of Sentry API](https://ai-hackathon-2026.devpost.com/) prize criteria.
+
+### What WatchTower AI does
+
+WatchTower AI is organized in layers. Each layer is implemented and live.
+
+#### 1. Probe layer — real-time monitoring
 
 | Capability | Description |
-|------------|-------------|
+| --- | --- |
 | **Independent probe network** | Concurrently probes Anthropic, OpenAI, and Google every 30 seconds (`asyncio.gather`). |
-| **Dynamic model discovery** | At startup, queries each provider's list-models API and picks **flagship** and **mid** tiers by rule — no hard-coded model IDs that 404 when a model is retired. |
-| **Multi-tier coverage** | Each provider gets two cards on the dashboard (e.g. `claude-opus-*` + `claude-sonnet-*`, `gpt-*` + `gpt-*-mini`, `gemini-*-pro` + `gemini-*-flash`). |
-| **QA quality probe** | Asks `"What is 2+2? Answer with just the number."` and verifies the reply contains `"4"`. Catches "online but broken" failures that latency-only checks miss. |
+| **Dynamic model discovery** | At startup, queries each provider's list-models API and picks **flagship** and **mid** tiers by rule — no hard-coded model IDs that 404 when retired. |
+| **Multi-tier coverage** | Each provider gets two dashboard cards (e.g. `claude-opus-*` + `claude-sonnet-*`). |
+| **QA quality probe** | Asks `"What is 2+2? Answer with just the number."` and verifies the reply contains `"4"`. |
 | **Token generation rate** | Estimates output tokens per second from each probe response. |
-| **Health scoring** | Rule-based score 0–100: start at 100, −35 on QA fail, latency penalty above a 1 s budget (capped at 40). Maps to `operational` (≥85), `degraded` (≥50), or `down`. |
-| **Precursor warning (`degrading`)** | Detects steadily climbing latency *before* status crosses into degraded/down — a forward-looking heads-up, not a false alarm on jitter. |
-| **Failure semantics** | Distinguishes genuine service faults (`down`, `degraded`) from account/config faults (`rate_limited` for HTTP 429, `misconfigured` for other 4xx). |
-| **Graceful degradation** | Missing API key → provider reported as `unknown`; probe loop never crashes. |
+| **Health scoring** | Rule-based score 0–100 → `operational` (≥85), `degraded` (≥50), or `down`. |
+| **Precursor warning (`degrading`)** | Detects steadily climbing latency *before* status crosses into degraded/down. |
+| **Failure semantics** | Distinguishes service faults (`down`, `degraded`) from account faults (`rate_limited`, `misconfigured`). |
+| **Graceful degradation** | Missing API key → `unknown`; probe loop never crashes. |
 
-### 2. Attribution layer — whose problem is it?
-
-| Capability | Description |
-|------------|-------------|
-| **Four-way verdict** | Local diagnostics produce one of: **your-side** (environment), **account-side** (quota/key/config), **service-side** (provider outage), or **all-clear**. |
-| **Local environment checks** | Per provider: DNS resolution, TCP connect to `:443`, and a minimal authenticated request to validate the API key. |
-| **Environment profile** | Egress IP, resolved IPs, and network RTT — informational context separate from model latency. |
-| **Smart alerts** | Rule-based alerts compare tiers (model-specific vs provider-wide outage), recommend failover (prefer same-provider healthy tier), and never conflate 429 with "service down". |
-| **Community corroboration** | Reddit complaint-rate spikes upgrade a probe anomaly to a **confirmed widespread event** — additive only; absent Reddit data changes nothing. |
-
-### 3. Research layer — why this matters
+#### 2. Attribution layer — whose problem is it?
 
 | Capability | Description |
-|------------|-------------|
-| **VU Amsterdam dataset backtest** | Computes real numbers from bundled CSV data (`backend/data/vu_dataset/`). |
-| **Coverage gap** | **29.7%** of incidents (161/542) were never marked "investigating" in real time — resolved-only posts with no live acknowledgment. |
-| **Official response latency** | Median **73 min** investigating → resolved (N=381); Anthropic median **55.5 min**. |
-| **Case study delay** | Example incident: official acknowledgment **~23 min** after estimated user impact window. |
-| **Honest boundaries** | Does **not** claim "we beat the status page by X minutes" without historical probe data. Argues the *window* high-frequency probing can fill. |
+| --- | --- |
+| **Four-way verdict** | Local diagnostics: **your-side**, **account-side**, **service-side**, or **all-clear**. |
+| **Local environment checks** | Per provider: DNS, TCP `:443`, minimal authenticated request. |
+| **Smart alerts** | Rule-based alerts compare tiers, recommend failover, never conflate 429 with "service down". |
+| **Community corroboration** | Hacker News complaint-rate spikes upgrade anomalies — additive only. |
 
-### 4. Observability — Sentry integration
+#### 3. Research layer — why this matters
+
+| Capability | Description |
+| --- | --- |
+| **VU Amsterdam dataset backtest** | Real numbers from bundled CSV (`backend/data/vu_dataset/`). |
+| **Coverage gap** | **29.7%** of incidents (161/542) never marked "investigating" in real time. |
+| **Official response latency** | Median **73 min** investigating → resolved (N=381). |
+| **Honest boundaries** | Does **not** claim measured head-start without historical probe data. |
+
+#### 4. Observability — Sentry integration
 
 | Layer | What it does |
-|-------|----------------|
-| **Layer 1 — Events** | Sends Sentry events for each degraded/down provider. |
-| **Layer 2 — Fingerprinting** | Groups repeated probe cycles of the same model + anomaly into one issue (no alert storm). |
-| **Layer 3 — Performance traces** | One transaction per probe cycle, one span per provider probe. |
-| **Redaction** | Scrubs API keys from URLs (especially Gemini's `?key=` query param) before anything leaves the process. |
+| --- | --- |
+| **Events** | Sentry events for each degraded/down provider. |
+| **Fingerprinting** | Groups repeated probe cycles into one issue. |
+| **Performance traces** | One transaction per probe cycle, one span per provider. |
+| **Redaction** | Scrubs API keys from URLs before anything leaves the process. |
 
-### 5. Persistence & engineering
+#### 5. Persistence & engineering
 
 | Capability | Description |
-|------------|-------------|
-| **SQLite history** | Probe results stored in `backend/data/watchtower.db`; survives backend restarts (7-day retention). |
-| **Frontend proxy** | Next.js `/api/*` routes proxy the FastAPI backend; fall back to mock data when `BACKEND_URL` is unset or unreachable. |
+| --- | --- |
+| **SQLite history** | `backend/data/watchtower.db`; 7-day retention. |
+| **Frontend proxy** | Next.js `/api/*` routes proxy FastAPI; mock fallback when backend unreachable. |
 
 ---
 
-## Architecture
+### Technical reference
+
+#### Requirements
+
+| Tool | Version / notes |
+| --- | --- |
+| **Node.js** | **20+** (frontend) |
+| **Python** | **3.11+** (backend) |
+| **API keys** | Optional — missing keys show provider as `unknown` |
+
+#### Quick start
+
+**Backend** (probe engine):
+
+```bash
+cd backend
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/playwright install chromium   # Gemini official status (optional)
+cp .env.example .env
+# Edit .env — ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
+.venv/bin/uvicorn app.main:app --reload --port 8000
+```
+
+**Frontend** (dashboard):
+
+```bash
+cd frontend
+npm install
+echo 'BACKEND_URL=http://localhost:8000' > .env.local
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Verify:
+
+```bash
+curl http://localhost:8000/health | jq .
+curl http://localhost:3000/api/health | jq .
+```
+
+Without `BACKEND_URL`, the dashboard serves **mock data**. Header `x-watchtower-fallback: mock` indicates fallback.
+
+See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md) for package-specific details.
+
+#### Configuration
+
+**Backend** (`backend/.env`) — copy from [backend/.env.example](backend/.env.example):
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key |
+| `OPENAI_API_KEY` | — | OpenAI API key |
+| `GEMINI_API_KEY` | — | Google AI key (alias: `GOOGLE_API_KEY`) |
+| `PROBE_INTERVAL` | `30` | Seconds between probe cycles |
+| `PROBE_TIMEOUT` | `20` | Per-request timeout (seconds) |
+| `SENTRY_DSN` | — | Sentry DSN (unset = disabled) |
+| `GEMINI_STATUS_BROWSER` | `1` | Headless Chromium for Gemini official status |
+| `ENABLE_DOCS` | off | Set `1` for `/docs` and OpenAPI |
+
+Model env vars (`ANTHROPIC_MODEL`, etc.) are **fallbacks only** when dynamic discovery fails.
+
+**Frontend** (`frontend/.env.local`):
+
+| Variable | Description |
+| --- | --- |
+| `BACKEND_URL` | FastAPI base URL, e.g. `http://localhost:8000` |
+
+#### API reference
+
+| Route | Description |
+| --- | --- |
+| `GET /health` | Live probe snapshot: providers, alerts, community signals |
+| `GET /diagnose` | Local DNS/TCP/key checks + four-way verdict |
+| `GET /backtest` | VU dataset detection-gap analysis (`503` if CSV missing) |
+
+Frontend proxies: `GET /api/health`, `/api/diagnose`, `/api/backtest`.
+
+**Provider status values:** `operational` · `degrading` · `degraded` · `down` · `unknown` · `rate_limited` · `misconfigured`
+
+**Verdict kinds:** `your-side` · `account-side` · `service-side` · `all-clear` · `indeterminate`
+
+Types shared in `frontend/src/lib/types.ts` and `backend/app/models.py`.
+
+#### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -99,272 +224,194 @@ WatchTower AI is organized in layers. Each layer is implemented and live — not
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  FastAPI Probe Engine (localhost:8000)                          │
-│                                                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ Probe loop   │  │ Community    │  │ SQLite history store │  │
-│  │ (30s)        │  │ loop (60s)   │  │ (watchtower.db)      │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘  │
-│         │                 │                                     │
-│         ▼                 ▼                                     │
-│  Claude / GPT / Gemini   Reddit JSON (corroboration)            │
-│  (QA probe + scoring)                                           │
-│                                                                 │
-│  GET /health · GET /diagnose · GET /backtest                    │
-│  Sentry (optional): events + fingerprints + traces              │
+│  Probe loop (30s) · Community loop (60s) · SQLite history     │
+│  Claude / GPT / Gemini (QA probe + scoring) · HN corroboration  │
+│  GET /health · GET /diagnose · GET /backtest · Sentry (optional)│
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Stack**
-
 | Layer | Technology |
-|-------|------------|
-| Frontend | Next.js 16 (App Router) + React 19 + Tailwind CSS 4 |
+| --- | --- |
+| Frontend | Next.js 16 + React 19 + Tailwind CSS 4 |
 | Backend | FastAPI + asyncio + httpx |
 | Persistence | SQLite (stdlib `sqlite3`) |
 | Observability | Sentry SDK (optional) |
 | Research data | VU Amsterdam status-page dataset (bundled CSV) |
 
+#### Detection gap & academic backing
+
+**Paper:** *An Empirical Characterization of Outages and Incidents in Public Services for LLMs* — Xiaoyu Chu et al., VU Amsterdam, **ICPE '25**.
+
+**Dataset:** [Zenodo 14018219](https://zenodo.org/records/14018219) · [GitHub atlarge-research/llm-service-analysis](https://github.com/atlarge-research/llm-service-analysis)
+
+| Metric | Value |
+| --- | --- |
+| Incidents never marked "investigating" in real time | **29.7%** (161/542) |
+| Median investigating → resolved | **73 min** (N=381) |
+| Anthropic median investigating → resolved | **55.5 min** |
+
+**What we claim:** Official status pages leave a blind window; high-frequency probing with QA checks can surface anomalies inside that window.
+
+**What we do not claim:** Measured head-start over the status page on historical incidents.
+
+#### Product philosophy
+
+- **You run it** — keys and probe history stay on your machine.
+- **Corroboration, not dependency** — HN signals upgrade alerts but never block core detection.
+- **Honest numbers** — backtest metrics computed from CSV; estimates flagged.
+- **Right cuts** — dropped BrowserBase scraping, StatusGator, ML classifiers to keep one complete story.
+
+#### Project structure
+
+```
+WatchTower-AI/
+├── README.md
+├── LICENSE · CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md
+├── backend/
+│   ├── app/           # main.py, probes.py, diagnostics.py, community.py, …
+│   ├── data/          # vu_dataset/ (bundled), watchtower.db (local, gitignored)
+│   └── tests/
+└── frontend/
+    └── src/           # app/, components/, lib/types.ts
+```
+
+#### Testing
+
+**Backend** (`backend/`):
+
+```bash
+PYTHONPATH=. .venv/bin/python tests/test_discovery.py
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -q   # requires: pip install pytest
+```
+
+**Frontend** (`frontend/`):
+
+```bash
+npm run lint
+npm run build
+```
+
+#### Deployment notes
+
+| Component | Target | Notes |
+| --- | --- | --- |
+| Frontend | Vercel | Set `BACKEND_URL` to probe engine URL |
+| Backend | Railway, Fly.io, etc. | Outbound HTTPS to provider APIs; persist `data/` for SQLite |
+| Secrets | Env vars only | Never commit `.env` |
+
+#### Documentation map
+
+| File | Contents |
+| --- | --- |
+| **README.md** | This file — idea, hackathon, technical reference |
+| [backend/README.md](backend/README.md) | Probe engine, model discovery, tests |
+| [frontend/README.md](frontend/README.md) | Dashboard setup, proxy routes, components |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
+| [SECURITY.md](SECURITY.md) | Responsible disclosure |
+| [frontend/AGENTS.md](frontend/AGENTS.md) | AI agent / Next.js 16 notes |
+| [backend/.env.example](backend/.env.example) | Backend env var names |
+
+#### License
+
+**GNU General Public License v3.0** — see [LICENSE](LICENSE). Report vulnerabilities via [SECURITY.md](SECURITY.md).
+
+API keys and local `watchtower.db` are yours — do not commit them.
+
+↑ English · [中文 →](#中文)
+
 ---
 
-## Quick start
+## 中文
 
-### Prerequisites
+→ [English](#english)
 
-- **Node.js** 20+ (frontend)
-- **Python** 3.11+ (backend)
-- API keys for the providers you want to probe (optional — missing keys show as `unknown`)
+### 目录
 
-### 1. Backend (probe engine)
+1. [理念](#理念)
+2. [UC Berkeley AI Hackathon 2026](#uc-berkeley-ai-hackathon-2026-1)
+3. [功能概览](#功能概览)
+4. [技术参考](#技术参考-1)
+
+### 理念
+
+**WatchTower AI** 是 AI 服务的**航班雷达** —— 在官方状态页更新之前发现 Claude / GPT / Gemini 的故障，并回答那个让你凌晨两点睡不着的问题：*是服务商挂了，还是我自己的问题？*
+
+官方状态页慢、不全，也不会告诉你**你的环境**是否正常。WatchTower AI 用持续独立探测、超越「HTTP 200」的 QA 检查、本地环境诊断，以及关于官方页面滞后于真实影响的诚实数据来填补这一空白。
+
+这是一款**本地开发者工具**：在你自己的机器上运行，API 密钥归你所有，探测历史保存在本地 SQLite 文件中 —— 不会上传到共享云服务。
+
+### UC Berkeley AI Hackathon 2026
+
+本项目在 **[UC Berkeley AI Hackathon 2026](https://ai-hackathon-2026.devpost.com/)**（2026 年 6 月 20–21 日）期间由 **Kai Chen**（[@kaiiiichen](https://github.com/kaiiiichen)）以**个人项目**完成。所有实现均在黑客松窗口内完成。
+
+#### 电梯演讲（Devpost 用）
+
+> WatchTower AI 是 Claude、GPT、Gemini 的本地航班雷达 —— 每 30 秒用真实 QA 检查探测各提供商，诊断故障是在你这边还是他们那边，并用同行评审的故障研究数据支撑「检测空白」论点。凌晨两点出问题时，你可以在几秒内得到诚实答案，而不必刷新仍显示「一切正常」的状态页。
+
+#### Devpost 提交清单
+
+| 要求 | 位置 |
+| --- | --- |
+| 2–3 句摘要 | 使用上方电梯演讲 |
+| 项目截图 | 仪表盘截图 |
+| GitHub 仓库链接 | https://github.com/kaiiiichen/WatchTower-AI |
+| 队名与桌号 | 在 [Devpost](https://ai-hackathon-2026.devpost.com/) 填写 |
+| 演示 | 实时仪表盘 + `GET /health` JSON |
+
+### 功能概览
+
+| 层级 | 能力 |
+| --- | --- |
+| **探测层** | 30 秒并发探测、动态模型发现、QA 探针、健康评分、前兆 `degrading` 预警 |
+| **归因层** | 四方裁决（你的环境 / 账户 / 服务 / 一切正常）、本地 DNS/TCP/密钥检查、HN 社区佐证 |
+| **研究层** | VU Amsterdam 数据集回测 —— 29.7% 事件从未实时标记为 investigating |
+| **可观测性** | Sentry 三层集成（事件、指纹分组、性能追踪）+ API 密钥脱敏 |
+| **持久化** | SQLite 探测历史、Next.js API 代理与 mock 回退 |
+
+### 技术参考
+
+#### 环境要求
+
+| 工具 | 版本 |
+| --- | --- |
+| Node.js | 20+ |
+| Python | 3.11+ |
+| API 密钥 | 可选 |
+
+#### 快速开始
 
 ```bash
-cd backend
-python3 -m venv .venv
+# 后端
+cd backend && python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-cp .env.example .env
-# Edit .env — add ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY as available
+cp .env.example .env   # 填入密钥
 .venv/bin/uvicorn app.main:app --reload --port 8000
-```
 
-Verify:
-
-```bash
-curl http://localhost:8000/health | jq .
-curl http://localhost:8000/diagnose | jq .
-curl http://localhost:8000/backtest | jq .
-```
-
-See [backend/README.md](./backend/README.md) for probe scoring, model discovery rules, and test commands.
-
-### 2. Frontend (dashboard)
-
-```bash
-cd frontend
-npm install
-# Connect to the live backend:
+# 前端
+cd frontend && npm install
 echo 'BACKEND_URL=http://localhost:8000' > .env.local
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+打开 [http://localhost:3000](http://localhost:3000)。
 
-Without `BACKEND_URL`, the dashboard serves **mock data** so the UI works standalone for demos.
+#### 文档索引
 
-### 3. Run both (typical dev)
+| 文件 | 内容 |
+| --- | --- |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 行为准则 |
+| [SECURITY.md](SECURITY.md) | 安全披露 |
+| [backend/README.md](backend/README.md) | 后端详情 |
+| [frontend/README.md](frontend/README.md) | 前端详情 |
 
-Terminal A — backend on `:8000`. Terminal B — frontend on `:3000` with `BACKEND_URL=http://localhost:8000`.
+#### 许可证
 
-The dashboard header shows **Last updated** from live probes when connected. Response header `x-watchtower-fallback: mock` indicates the frontend fell back to mock data.
+**GNU General Public License v3.0** —— 见 [LICENSE](LICENSE)。漏洞报告见 [SECURITY.md](SECURITY.md)。
 
----
-
-## Configuration
-
-### Backend (`backend/.env`)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | Anthropic API key |
-| `OPENAI_API_KEY` | — | OpenAI API key |
-| `GEMINI_API_KEY` | — | Google AI key (alias: `GOOGLE_API_KEY`) |
-| `PROBE_INTERVAL` | `30` | Seconds between probe cycles |
-| `PROBE_TIMEOUT` | `20` | Per-request probe timeout (seconds) |
-| `HISTORY_LEN` | `20` | Latency sparkline points kept in memory |
-| `TREND_WINDOW` | `5` | Probes inspected for precursor `degrading` trend |
-| `CORS_ORIGINS` | `http://localhost:3000,...` | Allowed frontend origins |
-| `SENTRY_DSN` | — | Sentry project DSN (unset = disabled) |
-| `SENTRY_ENVIRONMENT` | `watchtower` | Sentry environment tag |
-| `REDDIT_USER_AGENT` | `python:watchtower-ai:v1.0 ...` | Required by Reddit's public JSON API |
-| `COMMUNITY_INTERVAL` | `60` | Seconds between Reddit polls |
-| `ENABLE_DOCS` | off | Set `1` to expose `/docs` and OpenAPI |
-
-Model names (`ANTHROPIC_MODEL`, etc.) are **fallbacks only** — used when dynamic discovery fails.
-
-### Frontend (`frontend/.env.local`)
-
-| Variable | Description |
-|----------|-------------|
-| `BACKEND_URL` | Base URL of the FastAPI engine, e.g. `http://localhost:8000` |
+→ [English](#english) · ↑ 中文
 
 ---
 
-## API reference
-
-All backend routes return JSON. Types are shared with the frontend in `frontend/src/lib/types.ts`.
-
-### `GET /health`
-
-Live probe snapshot.
-
-```json
-{
-  "providers": [ /* ProviderHealth[] — one entry per probed tier */ ],
-  "alerts": [ /* Alert[] — rule-based, per anomaly */ ],
-  "updatedAt": "2026-06-20T12:00:00+00:00",
-  "community": [ /* CommunitySignal[] — Reddit corroboration */ ]
-}
-```
-
-**Provider status values:** `operational` · `degrading` · `degraded` · `down` · `unknown` · `rate_limited` · `misconfigured`
-
-### `GET /diagnose`
-
-Local environment diagnosis cross-referenced with the current probe layer.
-
-```json
-{
-  "checks": [ /* dns / tcp / key per provider */ ],
-  "localHealthy": true,
-  "verdictKind": "all-clear",
-  "verdict": "Your environment looks fine and all probed providers are operational.",
-  "checkedAt": "...",
-  "profile": { "egressIp": "...", "hosts": [ /* DNS + TCP RTT */ ] }
-}
-```
-
-**Verdict kinds:** `your-side` · `account-side` · `service-side` · `all-clear` · `indeterminate`
-
-### `GET /backtest`
-
-Detection lead-time analysis over the VU Amsterdam dataset. Returns `503` if CSV data is not bundled.
-
-Key fields: `coverage` (including `all.pct` ≈ 29.7%), `latency` (stage statistics), `caseTimelines`, `resolvedHistogram`.
-
-### Frontend proxy routes
-
-| Route | Proxies to |
-|-------|------------|
-| `GET /api/health` | `{BACKEND_URL}/health` |
-| `GET /api/diagnose` | `{BACKEND_URL}/diagnose` |
-| `GET /api/backtest` | `{BACKEND_URL}/backtest` |
-
----
-
-## Detection gap & academic backing
-
-WatchTower AI's "Detection Gap" section on the dashboard is computed from real data — not marketing copy.
-
-**Reference paper:** *An Empirical Characterization of Outages and Incidents in Public Services for LLMs* — Xiaoyu Chu et al., VU Amsterdam, **ICPE '25** (May 2025, Toronto).
-
-**Dataset:** [Zenodo record 14018219](https://zenodo.org/records/14018219) · [GitHub atlarge-research/llm-service-analysis](https://github.com/atlarge-research/llm-service-analysis)
-
-**Headline numbers (computed from bundled CSV):**
-
-| Metric | Value |
-|--------|-------|
-| Incidents never marked "investigating" in real time | **29.7%** (161/542) |
-| Median investigating → resolved | **73 min** (N=381) |
-| Anthropic median investigating → resolved | **55.5 min** |
-| Example case: impact → official acknowledgment | **~23 min** |
-
-**What we claim:** Official status pages leave a blind window; high-frequency probing with QA checks can surface anomalies inside that window.
-
-**What we do not claim:** Measured head-start over the status page on historical incidents (no probe data exists for those past events).
-
-Three honest takeaways from the research (usable in demos):
-
-1. Official status pages often under-report — users need independent fault awareness.
-2. Provider outages should be part of normal developer workflow, not rare exceptions.
-3. Community/user reports are an under-explored signal in peer-reviewed outage research — WatchTower AI explores this via Reddit corroboration.
-
----
-
-## Product philosophy
-
-WatchTower AI deliberately **did not** become a hosted "public signal service" or crowdsourced outage button. Design choices reflect a local-tool mindset:
-
-- **You run it** — keys and probe history stay on your machine.
-- **Corroboration, not dependency** — Reddit signals upgrade alerts but never block core detection.
-- **Honest numbers** — backtest metrics are computed from CSV; estimated quantities (impact-window start parsed from description text) are flagged.
-- **Right cuts** — features like BrowserBase scraping, StatusGator integration, ML classifiers, and periodicity prediction were dropped to keep one complete story line instead of many half-built modules.
-
----
-
-## Project structure
-
-```
-WatchTower-AI/
-├── README.md                 ← you are here
-├── backend/
-│   ├── app/
-│   │   ├── main.py           FastAPI app, probe + community loops, routes
-│   │   ├── probes.py         Model discovery, probing, scoring, alerts
-│   │   ├── diagnostics.py    Local DNS/TCP/key checks + verdict
-│   │   ├── community.py      Reddit community-signal layer
-│   │   ├── backtest.py       VU dataset analysis
-│   │   ├── store.py          SQLite probe history
-│   │   ├── monitoring.py     Sentry integration (3 layers)
-│   │   ├── config.py         Environment configuration
-│   │   └── models.py         Pydantic models (mirror frontend types)
-│   ├── data/
-│   │   ├── watchtower.db     Local probe history (gitignored in prod use)
-│   │   └── vu_dataset/       Bundled research CSV
-│   └── tests/                pytest-style unit tests
-└── frontend/
-    ├── src/
-    │   ├── app/              Next.js App Router pages + API proxy routes
-    │   ├── components/       Dashboard UI (cards, alerts, charts, diagnostics)
-    │   └── lib/types.ts      Shared TypeScript types
-    └── public/
-```
-
----
-
-## Testing
-
-From `backend/`:
-
-```bash
-# Model discovery & selection (offline)
-PYTHONPATH=. .venv/bin/python tests/test_discovery.py
-
-# Full test suite (if pytest available)
-PYTHONPATH=. .venv/bin/python -m pytest tests/ -q
-```
-
-Tests cover discovery rules, diagnostics verdicts, community signal parsing, backtest computations, SQLite store, Sentry event shape, and API handlers — all runnable without live API keys where possible.
-
----
-
-## Deployment notes
-
-| Component | Suggested target | Notes |
-|-----------|------------------|-------|
-| Frontend | Vercel | Set `BACKEND_URL` to your probe engine URL |
-| Backend | Railway, Fly.io, or any Python host | Needs outbound HTTPS to provider APIs; persist `data/` volume for SQLite |
-| Secrets | Environment variables only | Never commit `.env` |
-
-For local development, both services on localhost is the intended workflow.
-
----
-
-## References
-
-- **Paper:** Chu, X. et al. *An Empirical Characterization of Outages and Incidents in Public Services for LLMs.* ICPE 2025.
-- **Dataset:** VU Amsterdam LLM service analysis — Zenodo + GitHub links above.
-- **Hackathon:** Cal AI Hackathon 2026 — solo build with AI-assisted development.
-
----
-
-## License
-
-See repository license file if present. API keys and local `watchtower.db` are yours — do not commit them.
+WatchTower AI — *is it the service, or is it me?*

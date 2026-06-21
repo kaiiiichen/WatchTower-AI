@@ -11,7 +11,8 @@ from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import backtest, config, diagnostics
-from .community import CommunityState
+from .community_downdetector import enabled as dd_enabled
+from .community_hub import CommunityHubState
 from .models import BacktestReport, HealthSnapshot, LocalDiagnosis
 from .monitoring import init_sentry
 from .official_status import OfficialStatusState
@@ -44,7 +45,7 @@ async def _probe_loop(app: FastAPI) -> None:
 
 
 async def _community_loop(app: FastAPI) -> None:
-    """Refresh Reddit community signals on their own cadence, fully decoupled
+    """Refresh Hacker News community signals on their own cadence, fully decoupled
     from probing. Corroboration only: any failure is swallowed here so it can
     never touch the probe loop or the /health snapshot."""
     client: httpx.AsyncClient = app.state.client
@@ -86,6 +87,11 @@ async def lifespan(app: FastAPI):
         log.exception("failed to build probe targets at startup")
         app.state.targets = []
     log.info("probe targets: %s", [(t["id"], t["model"]) for t in app.state.targets])
+    if config.DEMO_FORCE_DOWN:
+        log.warning(
+            "DEMO_FORCE_DOWN=%s — synthetic degraded probe status enabled (demo only)",
+            config.DEMO_FORCE_DOWN,
+        )
     history_store = ProbeHistoryStore()
     history_store.init()
     history_store.cleanup_old()
@@ -101,14 +107,25 @@ async def lifespan(app: FastAPI):
         initial_history=initial_history,
     )
 
-    # Community signals (Reddit) — corroboration source, attached to probe_state
+    # Community signals (Hacker News) — corroboration source, attached to probe_state
     # so the snapshot can surface it. Built from the probed provider names; never
-    # blocks startup if Reddit is unreachable.
+    # blocks startup if HN search is unreachable.
     provider_names = list(dict.fromkeys(t["name"] for t in app.state.targets))
-    app.state.community = CommunityState(provider_names)
+    monitored_models: dict[str, list[str]] = {}
+    for t in app.state.targets:
+        monitored_models.setdefault(t["name"], []).append(t["model"])
+    app.state.community = CommunityHubState(provider_names)
     app.state.probe_state.community = app.state.community
+    if config.DOWNDETECTOR_ENABLED:
+        if dd_enabled():
+            log.info("Downdetector enabled — will scrape all providers each community poll")
+        else:
+            log.warning(
+                "DOWNDETECTOR_ENABLED=1 but Browserbase key missing/invalid — "
+                "check backend/.env (shell exports override .env)"
+            )
 
-    app.state.official = OfficialStatusState(provider_names)
+    app.state.official = OfficialStatusState(provider_names, monitored_models)
     app.state.probe_state.official = app.state.official
 
     if app.state.targets:
@@ -140,6 +157,9 @@ async def lifespan(app: FastAPI):
         with contextlib.suppress(asyncio.CancelledError):
             await official_task
         await app.state.client.aclose()
+        from . import gemini_status_browser
+
+        await gemini_status_browser.shutdown()
 
 
 app = FastAPI(

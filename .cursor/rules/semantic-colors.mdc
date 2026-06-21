@@ -1,0 +1,53 @@
+---
+description: WatchTower frontend — semantic color tokens only (no raw Tailwind hues)
+globs: frontend/**/*.{tsx,ts,css}
+alwaysApply: false
+---
+
+# Semantic colors (mandatory)
+
+All **semantic** UI color (red/green/blue/yellow/orange status tints) MUST come from the shared token system — never invent new Tailwind hue classes in components.
+
+## Single source of truth
+
+| File | Role |
+|------|------|
+| `frontend/src/lib/semantic-colors.ts` | **Only** place raw `rose-*` / `emerald-*` / etc. class strings may be defined |
+| `frontend/src/lib/style-maps.ts` | Domain maps: `STATUS_STYLES`, `SEVERITY_COLORS`, `VERDICT_STYLES`, `PROVIDER_OK`, … |
+
+```tsx
+import { SEMANTIC_COLORS, PROVIDER_OK, SEVERITY_COLORS } from "@/lib/style-maps";
+
+// ✅ tinted panel
+className={SEMANTIC_COLORS.rose.inset}
+
+// ✅ status dot + label (same green as Provider “Operational”)
+className={PROVIDER_OK.text}
+
+// ❌ never in components
+className="text-rose-600 dark:text-rose-400"
+className="border-emerald-200 bg-emerald-50"
+```
+
+## Hue meanings (fixed palette)
+
+| Hue | Meaning |
+|-----|---------|
+| `rose` | critical, error, down, fail |
+| `emerald` | success, operational, pass (`PROVIDER_OK`) |
+| `amber` | warning, degraded, account-side |
+| `sky` | info, maintenance, chart bars |
+| `yellow` | trending down, config |
+| `orange` | rate limit, partial outage |
+
+Neutrals (`zinc-*`, `--background`, `--accent`) are fine outside this system.
+
+## Adding a new semantic color
+
+1. Add or extend a hue in `semantic-colors.ts` only.
+2. Wire through `style-maps.ts` if it maps to product semantics.
+3. Run `npm run lint:colors` in `frontend/`.
+
+## Enforcement
+
+`npm run lint:colors` fails the build if components contain forbidden hue utilities. Fix violations by importing tokens — do not disable the check.

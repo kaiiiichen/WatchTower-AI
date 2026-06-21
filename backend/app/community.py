@@ -1,16 +1,10 @@
-"""Reddit community-signal source — the "fast leg" of the community-signal layer.
+"""Hacker News community-signal source — the "fast leg" of the community-signal layer.
 
-Watches public subreddits for a spike in outage chatter ("down", "outage",
-"not working", ...) and turns it into a per-provider corroboration signal.
+Uses the public Algolia HN Search API (no auth) to find recent stories mentioning each
+AI provider, then looks for outage chatter ("down", "outage", "not working", ...).
 
 PRINCIPLE: this is CORROBORATION, never a dependency. Every network/parse error
-degrades to a "unavailable" signal and the probe pipeline keeps running
-untouched — if Reddit is down, the main detection chain is unaffected.
-
-Reddit's public JSON endpoints need no auth but DO require a unique User-Agent or
-they aggressively rate-limit (HTTP 429). We poll each subreddit at most once per
-COMMUNITY_INTERVAL (60s, far under Reddit's threshold) and cache the latest
-result, so the snapshot is served from memory between polls."""
+degrades to an "unavailable" signal and the probe pipeline keeps running untouched."""
 from __future__ import annotations
 
 import logging
@@ -24,8 +18,7 @@ from . import config
 
 log = logging.getLogger("watchtower.community")
 
-# Fault keywords. Multi-word phrases are matched as substrings, so "is it just
-# me" catches the classic "is it just me or is X down" outage post.
+# Fault keywords. Multi-word phrases are matched as substrings.
 FAULT_KEYWORDS = (
     "down",
     "outage",
@@ -36,13 +29,11 @@ FAULT_KEYWORDS = (
     "is it just me",
 )
 
-# Provider name -> candidate subreddits, tried in order until one returns posts.
-# Gemini's community has churned (Bard -> Gemini), so we list fallbacks; whichever
-# responds first wins, and if none do the signal is simply "unavailable".
-SUBREDDITS: dict[str, tuple[str, ...]] = {
-    "Claude": ("ClaudeAI",),
-    "GPT": ("OpenAI",),
-    "Gemini": ("Bard", "GeminiAI", "GoogleGeminiAI"),
+# Provider name -> HN search queries, tried in order until one returns stories.
+PROVIDER_QUERIES: dict[str, tuple[str, ...]] = {
+    "Claude": ("Anthropic Claude", "Claude API"),
+    "GPT": ("OpenAI", "ChatGPT"),
+    "Gemini": ("Google Gemini", "Gemini API"),
 }
 
 
@@ -51,13 +42,11 @@ def _now_iso() -> str:
 
 
 def _fault_hit(text: str) -> bool:
-    """True if any fault keyword appears in the (lowercased) text."""
     low = text.lower()
     return any(kw in low for kw in FAULT_KEYWORDS)
 
 
 def count_complaints(posts: list[dict]) -> tuple[int, int]:
-    """Return (matched, total). A post matches if its title OR body has a keyword."""
     matched = sum(1 for p in posts if _fault_hit(p.get("title", "") + " " + p.get("body", "")))
     return matched, len(posts)
 
@@ -67,43 +56,46 @@ def complaint_rate(posts: list[dict]) -> float:
     return matched / total if total else 0.0
 
 
-def _extract_posts(payload: dict) -> list[dict]:
-    """Pull {title, body} out of a Reddit listing JSON, tolerating odd shapes."""
-    children = (payload.get("data") or {}).get("children") or []
+def _extract_stories(payload: dict) -> list[dict]:
+    hits = payload.get("hits") or []
     posts: list[dict] = []
-    for c in children:
-        d = (c or {}).get("data") or {}
-        posts.append({"title": d.get("title") or "", "body": d.get("selftext") or ""})
+    for h in hits:
+        posts.append(
+            {
+                "title": h.get("title") or h.get("story_title") or "",
+                "body": h.get("story_text") or h.get("comment_text") or "",
+            }
+        )
     return posts
 
 
-async def fetch_subreddit(client: httpx.AsyncClient, subreddit: str) -> list[dict] | None:
-    """Fetch the newest posts for one subreddit. Returns None on ANY failure so
-    callers can degrade gracefully — this never raises."""
-    url = f"https://www.reddit.com/r/{subreddit}/new.json"
+async def fetch_hn_stories(
+    client: httpx.AsyncClient,
+    query: str,
+) -> list[dict] | None:
+    """Fetch recent HN stories matching `query`. Returns None on ANY failure."""
+    since = int(time.time()) - config.COMMUNITY_LOOKBACK_HOURS * 3600
+    url = f"{config.HN_ALGOLIA_BASE.rstrip('/')}/search_by_date"
     try:
         r = await client.get(
             url,
-            params={"limit": config.COMMUNITY_POST_LIMIT},
-            headers={"User-Agent": config.REDDIT_USER_AGENT},
+            params={
+                "query": query,
+                "tags": "story",
+                "hitsPerPage": config.COMMUNITY_POST_LIMIT,
+                "numericFilters": f"created_at_i>{since}",
+            },
         )
         if r.status_code != 200:
-            log.warning("reddit r/%s HTTP %s", subreddit, r.status_code)
+            log.warning("hn search %r HTTP %s", query, r.status_code)
             return None
-        return _extract_posts(r.json())
-    except Exception as exc:  # network, JSON, anything — degrade, don't crash
-        log.warning("reddit r/%s fetch failed: %s", subreddit, exc)
+        return _extract_stories(r.json())
+    except Exception as exc:
+        log.warning("hn search %r failed: %s", query, exc)
         return None
 
 
 def classify(rate: float, baseline: list[float]) -> str:
-    """Classify a complaint rate against its rolling baseline.
-
-    "spike"    -> rate is both absolutely high AND well above its own baseline
-                  (needs enough baseline history to be trustworthy).
-    "elevated" -> noticeably above baseline but short of a confirmed spike.
-    "normal"   -> business as usual.
-    """
     if len(baseline) >= config.COMMUNITY_MIN_BASELINE:
         mean = sum(baseline) / len(baseline)
         is_spike = (
@@ -116,16 +108,17 @@ def classify(rate: float, baseline: list[float]) -> str:
         if rate - mean >= config.COMMUNITY_ELEVATED_DELTA:
             return "elevated"
         return "normal"
-    # Not enough history yet: only an absolute outlier reads as elevated.
     if rate >= config.COMMUNITY_SPIKE_MIN_RATE:
         return "elevated"
     return "normal"
 
 
-def _unavailable_signal(provider: str, subreddit: str | None) -> dict:
+def _unavailable_signal(provider: str, search_query: str | None) -> dict:
     return {
         "providerId": provider,
-        "subreddit": subreddit,
+        "source": "hackernews",
+        "searchQuery": search_query,
+        "lookbackHours": config.COMMUNITY_LOOKBACK_HOURS,
         "status": "unavailable",
         "complaintRate": 0.0,
         "baseline": 0.0,
@@ -136,43 +129,40 @@ def _unavailable_signal(provider: str, subreddit: str | None) -> dict:
 
 
 class CommunityState:
-    """Holds the rolling complaint-rate baseline + latest cached signal per
-    provider. `signals()` is read by the snapshot; `poll()` refreshes it."""
+    """Rolling complaint-rate baseline + latest cached HN signal per provider."""
 
     def __init__(self, provider_names: list[str]) -> None:
-        # Keep only providers we have a subreddit mapping for, preserving order.
-        self._providers = [n for n in provider_names if n in SUBREDDITS]
+        self._providers = [n for n in provider_names if n in PROVIDER_QUERIES]
         self._baseline: dict[str, deque] = {
             n: deque(maxlen=config.COMMUNITY_BASELINE_LEN) for n in self._providers
         }
         self._latest: dict[str, dict] = {
-            n: _unavailable_signal(n, SUBREDDITS[n][0]) for n in self._providers
+            n: _unavailable_signal(n, PROVIDER_QUERIES[n][0]) for n in self._providers
         }
         self._last_poll: dict[str, float] = {}
 
     async def _poll_one(self, client: httpx.AsyncClient, provider: str) -> dict:
-        """Fetch + classify one provider. Never raises; returns a signal dict."""
         posts: list[dict] | None = None
-        used_sub: str | None = None
-        for sub in SUBREDDITS[provider]:
-            posts = await fetch_subreddit(client, sub)
+        used_query: str | None = None
+        for query in PROVIDER_QUERIES[provider]:
+            posts = await fetch_hn_stories(client, query)
             if posts is not None:
-                used_sub = sub
+                used_query = query
                 break
         if posts is None:
-            # All candidate subreddits failed: keep the baseline, mark unavailable.
-            return _unavailable_signal(provider, SUBREDDITS[provider][0])
+            return _unavailable_signal(provider, PROVIDER_QUERIES[provider][0])
 
         rate = complaint_rate(posts)
         matched, total = count_complaints(posts)
         base = list(self._baseline[provider])
         status = classify(rate, base)
         baseline_mean = sum(base) / len(base) if base else 0.0
-        # Append AFTER classifying so a real spike doesn't pollute its own baseline.
         self._baseline[provider].append(rate)
         return {
             "providerId": provider,
-            "subreddit": used_sub,
+            "source": "hackernews",
+            "searchQuery": used_query,
+            "lookbackHours": config.COMMUNITY_LOOKBACK_HOURS,
             "status": status,
             "complaintRate": round(rate, 3),
             "baseline": round(baseline_mean, 3),
@@ -182,27 +172,22 @@ class CommunityState:
         }
 
     async def poll(self, client: httpx.AsyncClient) -> None:
-        """Refresh every mapped provider. Per-provider failures are isolated."""
         now = time.monotonic()
         for provider in self._providers:
-            # Cache guard: skip a refetch if we polled within the interval
-            # (defends against the loop firing faster than COMMUNITY_INTERVAL).
             last = self._last_poll.get(provider)
             if last is not None and now - last < config.COMMUNITY_INTERVAL:
                 continue
             try:
                 self._latest[provider] = await self._poll_one(client, provider)
-            except Exception:  # belt-and-suspenders; _poll_one shouldn't raise
+            except Exception:
                 log.exception("community poll failed for %s", provider)
                 self._latest[provider] = _unavailable_signal(
-                    provider, SUBREDDITS[provider][0]
+                    provider, PROVIDER_QUERIES[provider][0]
                 )
             self._last_poll[provider] = time.monotonic()
 
     def signals(self) -> list[dict]:
-        """Latest cached signal per provider (the cache the snapshot serves)."""
         return [self._latest[n] for n in self._providers]
 
     def by_provider(self) -> dict[str, dict]:
-        """Map provider name -> latest signal, for attribution lookups."""
         return dict(self._latest)

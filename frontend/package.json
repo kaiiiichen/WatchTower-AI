@@ -6,9 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint && npm run lint:colors",
+    "lint:colors": "node scripts/check-semantic-colors.mjs"
   },
   "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/nunito": "^5.2.7",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4"
