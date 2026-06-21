@@ -128,7 +128,7 @@ function EnvProfile({ profile }: { profile: EnvironmentProfile }) {
         </thead>
         <tbody className="align-top">
           {profile.hosts.map((h) => (
-            <tr key={h.host} className="border-t border-white/5">
+            <tr key={`${h.provider}-${h.host}`} className="border-t border-white/5">
               <td className="py-1.5 pr-2">
                 <div className="text-white/80">{h.provider}</div>
                 <div className="font-mono text-[10px] text-white/30">{h.host}</div>
