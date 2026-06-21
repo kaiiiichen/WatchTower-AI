@@ -50,6 +50,8 @@ class Alert(BaseModel):
     # True when a community-signal spike corroborates this probe anomaly,
     # upgrading the alert to a "confirmed widespread event".
     communityConfirmed: bool = False
+    officialAcknowledged: bool = False
+    fusionMode: str | None = None
 
 
 # Reddit community-signal heat for a provider. "unavailable" = the source
@@ -65,6 +67,29 @@ class CommunitySignal(BaseModel):
     baseline: float  # rolling mean complaint rate
     postCount: int
     matchedPosts: int
+    sampledAt: str | None = None
+
+
+OfficialSignalStatus = Literal[
+    "operational",
+    "degraded",
+    "partial_outage",
+    "major_outage",
+    "maintenance",
+    "unavailable",
+]
+
+
+class OfficialStatusSignal(BaseModel):
+    providerId: str
+    status: OfficialSignalStatus
+    headline: str | None = None
+    latestUpdate: str | None = None
+    latestPhase: str | None = None
+    impactLabel: str | None = None
+    componentSummary: str | None = None
+    pageUrl: str
+    active: bool = False
     sampledAt: str | None = None
 
 
@@ -169,3 +194,4 @@ class HealthSnapshot(BaseModel):
     updatedAt: str
     source: DataSource | None = None
     community: list[CommunitySignal] = []
+    official: list[OfficialStatusSignal] = []

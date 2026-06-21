@@ -499,9 +499,9 @@ class ProbeState:
     ) -> None:
         self._targets = targets
         self._history_store = history_store
-        # Optional Reddit corroboration source (CommunityState). Stays None in
-        # tests / when unset, so the snapshot + alerts behave exactly as before.
+        # Optional corroboration sources. None in tests / when unset.
         self.community = None
+        self.official = None
         self._history: dict[str, deque] = {t["id"]: deque(maxlen=config.HISTORY_LEN)for t in targets}
         if initial_history:
             for tid, points in initial_history.items():
@@ -554,15 +554,43 @@ class ProbeState:
     def snapshot(self) -> dict:
         providers = [self._latest[t["id"]] for t in self._targets]
         community = self.community.by_provider() if self.community else None
+        official = self.official.by_provider() if self.official else None
         return {
             "providers": providers,
-            "alerts": _build_alerts(providers, community),
+            "alerts": _build_alerts(providers, community, official),
             "updatedAt": self.updated_at,
             "community": self.community.signals() if self.community else [],
+            "official": self.official.signals() if self.official else [],
         }
 
 
-def _build_alerts(providers: list[dict], community: dict | None = None) -> list[dict]:
+def _official_acknowledged(sig: dict | None) -> bool:
+    if not sig or sig.get("status") == "unavailable":
+        return False
+    return bool(sig.get("active"))
+
+
+def _official_attribution_text(sig: dict) -> str:
+    chunks: list[str] = []
+    if sig.get("headline"):
+        chunks.append(f'Official status acknowledges: "{sig["headline"]}"')
+    if sig.get("impactLabel"):
+        chunks.append(f"({sig['impactLabel']})")
+    phase = sig.get("latestPhase")
+    body = sig.get("latestUpdate")
+    if phase and body:
+        chunks.append(f"Latest {phase}: {body[:240]}")
+    elif body:
+        chunks.append(body[:240])
+    page = sig.get("pageUrl") or "status page"
+    return " ".join(chunks) + f" — source: {page}"
+
+
+def _build_alerts(
+    providers: list[dict],
+    community: dict | None = None,
+    official: dict | None = None,
+) -> list[dict]:
     """Per-MODEL rule-based alerts. Two tiers of the same provider are compared
     so we can tell a model-specific problem (one tier impaired, the other fine)
     apart from a provider-wide outage, and prefer same-provider failover.
@@ -571,8 +599,13 @@ def _build_alerts(providers: list[dict], community: dict | None = None) -> list[
     probe anomaly coincides with a community-signal spike, the alert is upgraded
     to a confirmed widespread event. It's purely additive corroboration — absent
     or unavailable community data changes nothing.
+
+    `official` maps provider name -> latest Statuspage signal. When the provider
+    has already posted an incident, attribution cites their wording; when probes
+    fire but the page is still green, we note the detection-gap window.
     Full 'Agent' chain is a later module."""
     community = community or {}
+    official = official or {}
     healthy = [p for p in providers if p["status"] == "operational"]
     best_global = max(healthy, key=lambda p: p["healthScore"], default=None)
     alerts: list[dict] = []
@@ -621,6 +654,8 @@ def _build_alerts(providers: list[dict], community: dict | None = None) -> list[
                     f"from the real-time trend — no incident has occurred yet."
                 ),
                 "communityConfirmed": False,
+                "officialAcknowledged": False,
+                "fusionMode": None,
                 "createdAt": _now_iso(),
             }
         )
@@ -652,6 +687,9 @@ def _build_alerts(providers: list[dict], community: dict | None = None) -> list[
             alt = "No healthy alternative currently available."
 
         community_confirmed = False
+        official_acknowledged = False
+        fusion_mode: str | None = None
+        off = official.get(p["name"])
 
         if status in CONFIG_FAULTS:
             # Your problem, not the service's — so community chatter can't (and
@@ -710,12 +748,27 @@ def _build_alerts(providers: list[dict], community: dict | None = None) -> list[
                 f"(latency {p['latencyMs']}ms, QA {'pass' if p['qaCorrect'] else 'fail'})."
             )
 
+            if _official_acknowledged(off):
+                official_acknowledged = True
+                fusion_mode = "official_acknowledged"
+                attribution = _official_attribution_text(off) + " " + attribution
+                if status == "down":
+                    severity = "warning"
+                recovery = "Follow the provider's status page for official ETA."
+            elif off and off.get("status") == "operational" and not off.get("active"):
+                fusion_mode = "probe_ahead_of_official"
+                insight += (
+                    " WatchTower probes detect an anomaly, but the official status "
+                    "page still shows Operational — you may be ahead of official "
+                    "acknowledgment (see Detection Gap)."
+                )
+
             # Community corroboration: a SERVICE anomaly + a Reddit complaint spike
-            # for the same provider => confirmed widespread event, not yet officially
+            # for the same provider => confirmed widespread event when not yet officially
             # acknowledged. Corroboration only — never the basis for the alert itself.
             sig = community.get(p["name"])
             community_confirmed = bool(sig and sig.get("status") == "spike")
-            if community_confirmed:
+            if community_confirmed and not official_acknowledged:
                 sub = sig.get("subreddit")
                 insight += (
                     f" CONFIRMED WIDESPREAD EVENT — community signal is spiking on "
@@ -723,6 +776,10 @@ def _build_alerts(providers: list[dict], community: dict | None = None) -> list[
                     f"{sig.get('baseline')} over {sig.get('postCount')} posts). Probe "
                     f"anomaly + community spike corroborate each other; this looks like "
                     f"a real outage the provider has not acknowledged on its status page yet."
+                )
+            elif community_confirmed and official_acknowledged:
+                insight += (
+                    " Community chatter corroborates the official incident post."
                 )
 
         alerts.append(
@@ -736,6 +793,40 @@ def _build_alerts(providers: list[dict], community: dict | None = None) -> list[
                 "recommendedAlternative": alt,
                 "insight": insight,
                 "communityConfirmed": community_confirmed,
+                "officialAcknowledged": official_acknowledged,
+                "fusionMode": fusion_mode,
+                "createdAt": _now_iso(),
+            }
+        )
+
+    # Official-only: status page reports an issue but probes still pass.
+    for name, off in official.items():
+        if not _official_acknowledged(off):
+            continue
+        tiers = [p for p in providers if p["name"] == name]
+        if any(p["status"] in SERVICE_FAULTS for p in tiers):
+            continue
+        headline = off.get("headline") or "Active incident"
+        alerts.append(
+            {
+                "id": f"alert-{name}-official-only",
+                "severity": "info",
+                "providerId": tiers[0]["id"] if tiers else name.lower(),
+                "title": f"{name}: official status page reports an issue",
+                "attribution": _official_attribution_text(off),
+                "recoveryEta": "Follow the provider's status page for updates.",
+                "recommendedAlternative": (
+                    "Your probes still pass — may be regional or model-specific. "
+                    "Watch latency trends."
+                ),
+                "insight": (
+                    f"The official status page for {name} reports an active incident "
+                    f'("{headline}"), but WatchTower QA probes still pass from your '
+                    f"network. This can mean a partial outage or a model you are not probing."
+                ),
+                "communityConfirmed": False,
+                "officialAcknowledged": True,
+                "fusionMode": "official_only",
                 "createdAt": _now_iso(),
             }
         )

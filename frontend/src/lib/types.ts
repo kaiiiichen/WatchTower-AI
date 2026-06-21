@@ -50,6 +50,35 @@ export interface Alert {
   // True when a Reddit community-signal spike corroborates the probe anomaly,
   // upgrading the alert to a "confirmed widespread event".
   communityConfirmed?: boolean;
+  officialAcknowledged?: boolean;
+  fusionMode?: StatusFusionMode | null;
+}
+
+export type OfficialSignalStatus =
+  | "operational"
+  | "degraded"
+  | "partial_outage"
+  | "major_outage"
+  | "maintenance"
+  | "unavailable";
+
+export type StatusFusionMode =
+  | "official_acknowledged"
+  | "probe_ahead_of_official"
+  | "official_only"
+  | "aligned";
+
+export interface OfficialStatusSignal {
+  providerId: string;
+  status: OfficialSignalStatus;
+  headline?: string | null;
+  latestUpdate?: string | null;
+  latestPhase?: string | null;
+  impactLabel?: string | null;
+  componentSummary?: string | null;
+  pageUrl: string;
+  active?: boolean;
+  sampledAt?: string | null;
 }
 
 // Reddit community-signal heat for a provider. "unavailable" = source couldn't
@@ -129,6 +158,7 @@ export interface HealthSnapshot {
   updatedAt: string;
   source: DataSource;
   community?: CommunitySignal[];
+  official?: OfficialStatusSignal[];
 }
 
 // --- Local environment diagnostics ----------------------------------------

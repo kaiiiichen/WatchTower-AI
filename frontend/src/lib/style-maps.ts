@@ -51,3 +51,15 @@ export const COMMUNITY_STYLES = {
   CommunitySignalStatus,
   { label: string; dot: string; text: string; bar: string }
 >;
+
+export const OFFICIAL_STYLES = {
+  operational: { label: "Operational", dot: "bg-emerald-400", text: "text-emerald-300" },
+  degraded: { label: "Degraded", dot: "bg-amber-400", text: "text-amber-300" },
+  partial_outage: { label: "Partial outage", dot: "bg-orange-400", text: "text-orange-300" },
+  major_outage: { label: "Major outage", dot: "bg-rose-500", text: "text-rose-400" },
+  maintenance: { label: "Maintenance", dot: "bg-sky-400", text: "text-sky-300" },
+  unavailable: { label: "Unavailable", dot: "bg-white/30", text: "text-white/40" },
+} as const satisfies Record<
+  import("./types").OfficialSignalStatus,
+  { label: string; dot: string; text: string }
+>;

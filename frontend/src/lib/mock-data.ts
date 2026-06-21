@@ -200,6 +200,7 @@ export function buildMockSnapshot(): Omit<HealthSnapshot, "source"> {
         insight:
           "⚠️ GPT flagship is steadily degrading and may be heading toward a problem. Latency keeps climbing while it still responds — a pre-emptive heads-up from the real-time trend, no incident has occurred yet.",
         communityConfirmed: false,
+        officialAcknowledged: false,
         createdAt: new Date().toISOString(),
       },
       {
@@ -216,6 +217,7 @@ export function buildMockSnapshot(): Omit<HealthSnapshot, "source"> {
         insight:
           "Gemini flagship is rate-limited (HTTP 429): your account hit a request-rate or quota limit. This is your account's problem, NOT a Gemini service outage.",
         communityConfirmed: false,
+        officialAcknowledged: false,
         createdAt: new Date().toISOString(),
       },
     ],
@@ -252,6 +254,28 @@ export function buildMockSnapshot(): Omit<HealthSnapshot, "source"> {
         postCount: 25,
         matchedPosts: 2,
         sampledAt: new Date().toISOString(),
+      },
+    ],
+    official: [
+      {
+        providerId: "Claude",
+        status: "operational",
+        pageUrl: "https://status.claude.com/",
+        active: false,
+        sampledAt: new Date().toISOString(),
+      },
+      {
+        providerId: "GPT",
+        status: "operational",
+        pageUrl: "https://status.openai.com/",
+        active: false,
+        sampledAt: new Date().toISOString(),
+      },
+      {
+        providerId: "Gemini",
+        status: "unavailable",
+        pageUrl: "https://aistudio.google.com/status",
+        active: false,
       },
     ],
   };

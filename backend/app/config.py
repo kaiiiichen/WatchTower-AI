@@ -95,6 +95,10 @@ REDDIT_USER_AGENT = os.getenv(
 )
 # How often to poll Reddit (seconds). Kept well above Reddit's rate-limit floor.
 COMMUNITY_INTERVAL = _env_int("COMMUNITY_INTERVAL", "60")
+
+# --- Official status pages (Statuspage JSON) -------------------------------
+# Polls less often than probes — official pages update on minute-scale cadence.
+OFFICIAL_STATUS_INTERVAL = _env_int("OFFICIAL_STATUS_INTERVAL", "120")
 # Posts pulled per subreddit per poll.
 COMMUNITY_POST_LIMIT = _env_int("COMMUNITY_POST_LIMIT", "25")
 # Rolling complaint-rate samples kept per subreddit for the spike baseline.

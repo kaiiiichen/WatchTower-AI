@@ -15,6 +15,11 @@ export default function AlertBanner({ alert }: { alert: Alert }) {
             ◉ Confirmed widespread · unacknowledged
           </span>
         ) : null}
+        {alert.officialAcknowledged ? (
+          <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300">
+            ✓ Official acknowledged
+          </span>
+        ) : null}
       </div>
 
       <p className="mt-3 text-sm leading-relaxed text-white/80">{alert.insight}</p>

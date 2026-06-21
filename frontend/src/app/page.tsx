@@ -5,6 +5,7 @@ import type { HealthSnapshot } from "@/lib/types";
 import ProviderCard from "@/components/ProviderCard";
 import AlertBanner from "@/components/AlertBanner";
 import CommunitySignals from "@/components/CommunitySignals";
+import OfficialStatus from "@/components/OfficialStatus";
 import LocalDiagnostics from "@/components/LocalDiagnostics";
 import DetectionGap from "@/components/DetectionGap";
 
@@ -88,6 +89,10 @@ export default function Dashboard() {
         <LocalDiagnostics />
 
         <DetectionGap />
+
+        {snap?.official?.length ? (
+          <OfficialStatus signals={snap.official} />
+        ) : null}
 
         {snap?.community?.length ? (
           <CommunitySignals signals={snap.community} />

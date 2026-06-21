@@ -1,0 +1,13 @@
+{
+  "components": [
+    {
+      "name": "Claude API (api.anthropic.com)",
+      "status": "operational"
+    },
+    {
+      "name": "claude.ai",
+      "status": "operational"
+    }
+  ],
+  "incidents": []
+}

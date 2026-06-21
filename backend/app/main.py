@@ -14,6 +14,7 @@ from . import backtest, config, diagnostics
 from .community import CommunityState
 from .models import BacktestReport, HealthSnapshot, LocalDiagnosis
 from .monitoring import init_sentry
+from .official_status import OfficialStatusState
 from .probes import ProbeState, build_targets, probe_all
 from .store import ProbeHistoryStore
 
@@ -59,6 +60,21 @@ async def _community_loop(app: FastAPI) -> None:
         await asyncio.sleep(max(0, config.COMMUNITY_INTERVAL - elapsed))
 
 
+async def _official_loop(app: FastAPI) -> None:
+    """Refresh official status-page signals on their own cadence."""
+    client: httpx.AsyncClient = app.state.client
+    official: OfficialStatusState = app.state.official
+    loop = asyncio.get_running_loop()
+    while True:
+        cycle_start = loop.time()
+        try:
+            await official.poll(client)
+        except Exception:
+            log.exception("official status loop failed")
+        elapsed = loop.time() - cycle_start
+        await asyncio.sleep(max(0, config.OFFICIAL_STATUS_INTERVAL - elapsed))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_sentry()  # Layer 1: no-op when SENTRY_DSN is unset.
@@ -92,6 +108,9 @@ async def lifespan(app: FastAPI):
     app.state.community = CommunityState(provider_names)
     app.state.probe_state.community = app.state.community
 
+    app.state.official = OfficialStatusState(provider_names)
+    app.state.probe_state.official = app.state.official
+
     if app.state.targets:
         try:
             await probe_all(app.state.client, app.state.probe_state, app.state.targets)
@@ -101,18 +120,25 @@ async def lifespan(app: FastAPI):
         await app.state.community.poll(app.state.client)  # best-effort warm-up
     except Exception:
         log.exception("initial community poll failed")
+    try:
+        await app.state.official.poll(app.state.client)
+    except Exception:
+        log.exception("initial official status poll failed")
 
     task = asyncio.create_task(_probe_loop(app))
     community_task = asyncio.create_task(_community_loop(app))
+    official_task = asyncio.create_task(_official_loop(app))
     try:
         yield
     finally:
-        for t in (task, community_task):
+        for t in (task, community_task, official_task):
             t.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
         with contextlib.suppress(asyncio.CancelledError):
             await community_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await official_task
         await app.state.client.aclose()
 
 
