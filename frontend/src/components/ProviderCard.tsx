@@ -24,6 +24,13 @@ export default function ProviderCard({ p }: { p: ProviderHealth }) {
         <p className="mt-1 truncate font-mono text-xs text-white/40">{p.model}</p>
       ) : null}
 
+      {p.status === "degrading" ? (
+        // Forward-looking: predict, don't just alarm after the fact.
+        <p className="mt-2 rounded-lg bg-yellow-400/10 px-2 py-1 text-xs text-yellow-300">
+          ⚠️ Performance trending down — heads-up before any outage.
+        </p>
+      ) : null}
+
       <div className="mt-4 flex items-baseline gap-2">
         <span className="text-4xl font-bold text-white tabular-nums">{p.healthScore}</span>
         <span className="text-sm text-white/40">/ 100 health</span>

@@ -50,6 +50,17 @@ PROBE_TIMEOUT = _env_float("PROBE_TIMEOUT", "20")
 # stays snappy and a hung check degrades to "unknown" quickly.
 DIAGNOSTIC_TIMEOUT = _env_float("DIAGNOSTIC_TIMEOUT", "5")
 
+# --- Trend warning ("degrading" precursor) --------------------------------
+# Pre-emptive signal: flag a still-healthy provider whose latency is steadily
+# climbing, BEFORE it crosses into degraded/down. Thresholds are deliberately
+# conservative so normal latency jitter doesn't trigger false warnings.
+TREND_WINDOW = _env_int("TREND_WINDOW", "5")  # last N probes to inspect
+# A "rising" trend needs ALL of: mostly-monotonic climb, a big relative rise,
+# and a meaningful absolute rise — so jitter on a fast provider can't trip it.
+TREND_ALLOWED_DIPS = _env_int("TREND_ALLOWED_DIPS", "1")  # non-increasing steps tolerated
+TREND_MIN_RISE_RATIO = _env_float("TREND_MIN_RISE_RATIO", "0.5")  # >=50% over the window
+TREND_MIN_RISE_MS = _env_int("TREND_MIN_RISE_MS", "200")  # and >=200ms absolute
+
 # Disable OpenAPI/docs in production (set ENABLE_DOCS=1 for local dev).
 ENABLE_DOCS = os.getenv("ENABLE_DOCS", "").strip() in ("1", "true", "yes")
 

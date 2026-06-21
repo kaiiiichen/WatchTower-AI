@@ -425,6 +425,43 @@ def _score_and_status(r: ProbeResult | None) -> tuple[int, str]:
     return score, "down"
 
 
+# --- Trend warning (precursor) ---------------------------------------------
+
+
+def latency_trend(latencies: list[int], window: int | None = None) -> dict | None:
+    """Real-time trend over the last `window` latency samples — no ML, no history
+    training. Returns None when there isn't enough data, else a summary dict with
+    `degrading: bool`.
+
+    "degrading" requires ALL three, so ordinary jitter can't trip it:
+      - a mostly-monotonic climb (at most TREND_ALLOWED_DIPS non-increasing steps),
+      - a large RELATIVE rise (>= TREND_MIN_RISE_RATIO across the window), and
+      - a meaningful ABSOLUTE rise (>= TREND_MIN_RISE_MS) so a 50->80ms wobble on
+        a fast provider doesn't count."""
+    window = window or config.TREND_WINDOW
+    if len(latencies) < window:
+        return None
+    seg = latencies[-window:]
+    first, last = seg[0], seg[-1]
+    if first <= 0:
+        return None
+    ups = sum(1 for a, b in zip(seg, seg[1:]) if b > a)
+    rise = last - first
+    rise_ratio = rise / first
+    degrading = (
+        ups >= (window - 1) - config.TREND_ALLOWED_DIPS
+        and rise_ratio >= config.TREND_MIN_RISE_RATIO
+        and rise >= config.TREND_MIN_RISE_MS
+    )
+    return {
+        "degrading": degrading,
+        "first": first,
+        "last": last,
+        "riseRatio": round(rise_ratio, 2),
+        "window": window,
+    }
+
+
 # --- Shared dict builder ---------------------------------------------------
 
 
@@ -473,6 +510,14 @@ class ProbeState:
         latency = result.latency_ms if result else 0
         if result is not None:
             self._history[tid].append({"t": _now_iso(), "ms": latency})
+        # Trend warning: a provider that is still healthy NOW but whose latency is
+        # steadily climbing is flagged "degrading" — a pre-emptive heads-up. Only
+        # overrides "operational"; an already-impaired status (degraded/down/...)
+        # is a real problem, not a precursor.
+        if status == "operational":
+            trend = latency_trend([pt["ms"] for pt in self._history[tid]])
+            if trend and trend["degrading"]:
+                status = "degrading"
         self._latest[tid] = _build_provider_health(
             target=target, status=status, score=score, latency=latency,
             token_rate=result.token_rate if result else 0,
@@ -511,6 +556,49 @@ def _build_alerts(providers: list[dict], community: dict | None = None) -> list[
     # (your problem). The whole point of the product: don't conflate the two.
     SERVICE_FAULTS = ("degraded", "down")
     CONFIG_FAULTS = ("rate_limited", "misconfigured")
+
+    # Precursor pass: "degrading" providers are still healthy now but trending
+    # down — emit a forward-looking heads-up (info), NOT an incident alert.
+    for p in providers:
+        if p["status"] != "degrading":
+            continue
+        label = f"{p['name']} {p.get('tier', '')}".strip()
+        model = p.get("model", "?")
+        trend = latency_trend([pt["ms"] for pt in p.get("latencyHistory", [])])
+        if trend:
+            pct = round(trend["riseRatio"] * 100)
+            detail = (
+                f"Latency has climbed ~{pct}% over the last {trend['window']} probes "
+                f"({trend['first']}→{trend['last']}ms) while still responding."
+            )
+        else:
+            detail = "Latency is trending upward while still responding."
+        alerts.append(
+            {
+                "id": f"alert-{p['id']}-degrading",
+                "severity": "info",
+                "providerId": p["id"],
+                "title": f"{label} ({model}) performance is trending down",
+                "attribution": (
+                    f"Early-warning trend, not a fault yet — {detail} Predicted from the "
+                    f"live latency curve, before any outage."
+                ),
+                "recoveryEta": "Predictive — no incident yet; watching the trend.",
+                "recommendedAlternative": (
+                    f"Pre-warm {best_global['name']} {best_global.get('tier')} "
+                    f"({best_global.get('model')}) in case this continues."
+                    if best_global and best_global["name"] != p["name"]
+                    else "No action needed yet — heads-up only."
+                ),
+                "insight": (
+                    f"⚠️ {label} ({model}) performance is steadily degrading and may be "
+                    f"heading toward a problem. {detail} This is a pre-emptive heads-up "
+                    f"from the real-time trend — no incident has occurred yet."
+                ),
+                "communityConfirmed": False,
+                "createdAt": _now_iso(),
+            }
+        )
 
     for p in providers:
         status = p["status"]
