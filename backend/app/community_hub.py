@@ -33,10 +33,17 @@ class CommunityHubState:
 
         for provider in self._hn._providers:
             try:
-                self._dd_latest[provider] = await fetch_provider_signal(client, provider)
+                fresh = await fetch_provider_signal(client, provider)
             except Exception:
                 log.exception("downdetector poll failed for %s", provider)
-                self._dd_latest[provider] = None
+                continue
+            if fresh is not None:
+                self._dd_latest[provider] = fresh
+            elif self._dd_latest.get(provider) is not None:
+                log.info(
+                    "downdetector %s: no data this cycle — keeping previous result",
+                    provider,
+                )
 
     def signals(self) -> list[dict]:
         return [self._merged_for(p) for p in self._hn._providers]

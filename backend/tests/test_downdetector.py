@@ -207,6 +207,38 @@ class TestHubPolling:
                 sig = hub.by_provider()[name]
                 assert len(sig.get("sources", [])) == 1
 
+    def test_keeps_previous_dd_on_fetch_failure(self, monkeypatch):
+        monkeypatch.setattr(config, "DOWNDETECTOR_ENABLED", True)
+        monkeypatch.setattr(config, "BROWSERBASE_API_KEY", "bb-key")
+
+        hub = CommunityHubState(["GPT"])
+        prior = {
+            "source": "Downdetector",
+            "count": 3,
+            "spike": False,
+            "headline": "User reports indicate no current problems",
+            "summary": "Quiet cycle.",
+            "comments": [],
+            "url": "https://downdetector.com/status/openai/#comments",
+        }
+        hub._dd_latest["GPT"] = prior
+
+        with patch(
+            "app.community_hub.fetch_provider_signal",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            async def main():
+                async with httpx.AsyncClient() as client:
+                    await hub.poll(client)
+
+            _run(main())
+            sig = hub.by_provider()["GPT"]
+            assert any(s.get("source") == "Downdetector" for s in sig["sources"])
+            dd = next(s for s in sig["sources"] if s["source"] == "Downdetector")
+            assert dd["count"] == 3
+            assert dd["headline"] == prior["headline"]
+
     def test_polls_dd_for_faulting_provider(self, monkeypatch):
         monkeypatch.setattr(config, "DOWNDETECTOR_ENABLED", True)
         monkeypatch.setattr(config, "BROWSERBASE_API_KEY", "bb-key")

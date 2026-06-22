@@ -6,10 +6,14 @@ The *_MODEL / *_MODEL_MID values here are only fallbacks used when discovery
 fails or no key is present."""
 import logging
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Always load backend/.env (not cwd-dependent). override=True so repo .env wins
+# over stale shell exports (e.g. placeholder keys or proxy vars from other sessions).
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(_ENV_FILE, override=True)
 
 log = logging.getLogger("watchtower.config")
 
