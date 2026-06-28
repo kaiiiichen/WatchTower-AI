@@ -59,6 +59,8 @@ Built at **[UC Berkeley AI Hackathon 2026](https://ai-hackathon-2026.devpost.com
 
 > WatchTower AI is a local flight radar for Claude, GPT, and Gemini — it probes providers every 30 seconds with real QA checks, diagnoses whether an outage is on your side or theirs, and backs its "detection gap" claims with peer-reviewed outage research. When something breaks at 2 AM, you get an honest answer in seconds instead of refreshing a status page that may still say "operational."
 
+[![Watch the video](./assets/youtube_preview.jpg)](https://www.youtube.com/watch?v=IKbsyVAsRDw&t=3s)
+
 #### Devpost submission checklist
 
 | Requirement | Where |
