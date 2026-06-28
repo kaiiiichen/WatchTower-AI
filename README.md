@@ -6,7 +6,7 @@
 
 Next.js · React · TypeScript · Tailwind · FastAPI · Python · SQLite · Docker · Sentry
 
-**English** · **中文**
+[English](#english) · [**中文**](#中文)
 
 | | |
 | --- | --- |
@@ -14,6 +14,12 @@ Next.js · React · TypeScript · Tailwind · FastAPI · Python · SQLite · Doc
 | **Hackathon** | [UC Berkeley AI Hackathon 2026](https://ai-hackathon-2026.devpost.com/) |
 | **Local demo** | Frontend `http://localhost:3000` · Backend `http://localhost:8000` |
 | **Docker demo** | `docker compose up --build` → [http://localhost:3000](http://localhost:3000) |
+
+---
+
+## YouTube Demo Video
+
+[![Watch the video](./assets/youtube_preview.jpg)](https://www.youtube.com/watch?v=IKbsyVAsRDw&t=3s)
 
 ---
 
@@ -26,22 +32,23 @@ Next.js · React · TypeScript · Tailwind · FastAPI · Python · SQLite · Doc
 1. [The idea](#the-idea)
 2. [UC Berkeley AI Hackathon 2026](#uc-berkeley-ai-hackathon-2026)
 3. [What WatchTower AI does](#what-watchtower-ai-does)
-4. [Getting started — pick your path](#getting-started--pick-your-path)
-5. [Prerequisites](#prerequisites)
-6. [Quick start (Docker)](#quick-start-docker)
-7. [Quick start (local dev)](#quick-start-local-dev)
-8. [Verify it works](#verify-it-works)
-9. [Configuration](#configuration)
-10. [Troubleshooting](#troubleshooting)
-11. [API reference](#api-reference)
-12. [Architecture](#architecture)
-13. [Detection gap & academic backing](#detection-gap--academic-backing)
-14. [Product philosophy](#product-philosophy)
-15. [Project structure](#project-structure)
-16. [Testing](#testing)
-17. [Deployment notes](#deployment-notes)
-18. [Documentation map](#documentation-map)
-19. [License](#license)
+4. [Reception](#reception)
+5. [Getting started — pick your path](#getting-started--pick-your-path)
+6. [Prerequisites](#prerequisites)
+7. [Quick start (Docker)](#quick-start-docker)
+8. [Quick start (local dev)](#quick-start-local-dev)
+9. [Verify it works](#verify-it-works)
+10. [Configuration](#configuration)
+11. [Troubleshooting](#troubleshooting)
+12. [API reference](#api-reference)
+13. [Architecture](#architecture)
+14. [Detection gap & academic backing](#detection-gap--academic-backing)
+15. [Product philosophy](#product-philosophy)
+16. [Project structure](#project-structure)
+17. [Testing](#testing)
+18. [Deployment notes](#deployment-notes)
+19. [Documentation map](#documentation-map)
+20. [License](#license)
 
 ### The idea
 
@@ -131,6 +138,15 @@ WatchTower AI is organized in layers. Each layer is implemented and live.
 | --- | --- |
 | **SQLite history** | `backend/data/watchtower.db`; 7-day retention (ephemeral in Docker unless you mount a volume). |
 | **Frontend proxy** | Next.js `/api/*` routes proxy FastAPI; dashboard shows a clear offline state when backend is unreachable. |
+
+---
+
+### Reception
+
+At the hackathon, five judges stopped by the booth — above the event average of three — which made it one of the busier tables in the room. A judge from Google DeepMind called the project "very interesting," said "great job," and, hearing it was my first hackathon, gently urged me to worry less and come back for more. I'm quietly proud that the work landed that way.
+
+> "Very interesting — great job. Knowing this was your first hackathon, don't be so anxious; you should join more hackathons."
+> — Judge, Google DeepMind
 
 ---
 
